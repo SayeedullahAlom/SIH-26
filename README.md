@@ -12,9 +12,6 @@ The backend is being developed incrementally. Phase 1, Phase 2, and Phase 3 are 
 | Phase 1 | ✅ Complete | Backend foundation, PostgreSQL, SQLAlchemy, Alembic, JWT authentication |
 | Phase 2 | ✅ Complete | Image upload, Cloudflare R2 storage, inspection session CRUD |
 | Phase 3 | ✅ Complete | Legal Metrology RAG pipeline & semantic rule retrieval |
-| Phase 4 | 🚧 Next | OCR & structured declaration extraction |
-| Phase 5 | ⏳ Planned | Legal Metrology rules & compliance engine |
-| Phase 6 | ⏳ Planned | Reports, review workflow & production hardening |
 
 > **Important:** Authentication, inspection/image ingestion, and the Legal Metrology RAG pipeline are already implemented. Do not rebuild these components during Phase 4.
 
@@ -2629,15 +2626,7 @@ API Response
                        Phase 3 — RAG Pipeline
                      (Rule Retrieval — Complete)
                                 │
-                     ┌──────────┴──────────┐
-                     ▼                     ▼
-                  Phase 4                Phase 5
-                Declarations        Compliance Engine
-                     │                     │
-                     └──────────┬──────────┘
-                                ▼
-                             Phase 6
-                           Final Report
+                    
 ```
 
 - **Phase 1:** COMPLETE ✅
