@@ -28,8 +28,6 @@ The next development stage is the **Legal Metrology compliance/rules engine**, w
 | Phase 1 | ✅ Complete | Backend foundation, PostgreSQL, SQLAlchemy, Alembic, JWT authentication |
 | Phase 2 | ✅ Complete | Image upload, Cloudflare R2 storage, inspection session CRUD |
 | Phase 3 | ✅ Complete | pgvector-based Legal Metrology rule storage and RAG retrieval |
-| Phase 4 | 🚧 Next | Legal Metrology compliance/rules engine |
-| Phase 5 | ⏳ Planned | Reports, review workflow & production hardening |
 
 > **Important:** Authentication, inspection/image ingestion, and the Phase 3 RAG layer are already implemented. Do not rebuild these components.
 
