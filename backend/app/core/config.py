@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # --- Reserved for later phases (AI/OCR/RAG) ---
     # Present now only so the env format is settled; not used in Phase 1.
     AI_API_KEY: str | None = None
+    R2_ACCOUNT_ID: str
+    R2_ACCESS_KEY_ID: str
+    R2_SECRET_ACCESS_KEY: str
+    R2_BUCKET_NAME: str
 
     # --- App metadata ---
     APP_NAME: str = "Legal Metrology Compliance API"

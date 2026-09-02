@@ -44,6 +44,12 @@ class Inspection(Base):
         "Report", back_populates="inspection", cascade="all, delete-orphan"
     )
 
+    extractions = relationship(
+    "InspectionExtraction",
+    back_populates="inspection",
+    cascade="all, delete-orphan",
+)
+
     __table_args__ = (
         CheckConstraint(
             "status IN ('pending', 'processing', 'completed', 'failed')",
