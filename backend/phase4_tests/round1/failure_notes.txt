@@ -1,0 +1,41 @@
+PHASE 4 - ROUND 1 BASELINE
+
+Test image:
+Resources/test.jpg
+
+Model:
+gemini-3.5-flash
+
+Result:
+Extraction successfully completed and was saved to PostgreSQL.
+
+Successful fields:
+- generic_name
+- manufacturer_name
+- manufacturer_address
+- mrp
+- best_before_or_use_by
+- consumer_care
+
+Correctly identified as not visible:
+- packer_name
+- packer_address
+- importer_name
+- importer_address
+- country_of_origin
+- net_quantity
+- net_quantity_unit
+- dimensions
+- unit_sale_price
+- manufacture_date
+- packing_date
+- import_date
+- batch_or_lot_number
+
+Failure:
+product_name contained the correct product name "Lay's Classic Salted"
+followed by a large amount of unrelated/generated text.
+
+Action for next round:
+Refine the product_name extraction instruction so that only the
+actual printed product/brand name is returned.
