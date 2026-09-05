@@ -1,854 +1,584 @@
-Legal Metrology Compliance API
+Legal Metrology AI Inspection Backend
 
-Phase 1 — Backend Foundations
-
-This repository contains the backend for the Legal Metrology Compliance application.
-
-The project is being developed in phases. Phase 1 is complete and establishes the backend foundation that future phases will build on.
-
-Phase status
-
-Phase
+Backend for the SIH-26 Legal Metrology Compliance Application. Provides authentication, inspection session management, image ingestion via Cloudflare R2, a RAG pipeline for semantic retrieval of Legal Metrology rules, a Vision AI pipeline for structured package declaration extraction, and a compliance verdict engine that evaluates extracted declarations against retrieved legal rules.
 
 Status
+Phase	Status	Purpose
+0	✅ Complete	Database schema & requirements finalized
+1	✅ Complete	Auth foundation — FastAPI, PostgreSQL, SQLAlchemy, Alembic, JWT
+2	✅ Complete	Image upload, R2 storage, inspection CRUD
+3	✅ Complete	Legal Metrology RAG pipeline & semantic rule retrieval
+4	✅ Complete	Vision AI package declaration extraction
+5	✅ Complete	Compliance verdict engine
 
-Purpose
+Phase 4 extracts what is visible on a package. Phase 5 uses those extracted declarations together with retrieved Legal Metrology rules to determine compliance.
 
-Phase 0
+Tech Stack
 
-✅ Complete
+Python 3.12 · FastAPI · Uvicorn · PostgreSQL + pgvector · SQLAlchemy · Alembic · Pydantic v2 · JWT (Argon2/Passlib) · Cloudflare R2 (boto3) · Google Gemini · pytest
 
-Finalized database/schema and application requirements
-
-Phase 1
-
-✅ Complete
-
-Backend foundation, database integration, migrations, authentication
-
-Phase 2
-
-🚧 Next
-
-OCR / AI / RAG / compliance functionality
-
-Later phases
-
-⏳ Planned
-
-Additional application functionality
-
-Important: OCR, AI, RAG, automated compliance analysis, and related intelligence are not implemented in Phase 1. They belong to later phases.
-
-1. What Phase 1 Provides
-
-Phase 1 establishes the infrastructure that the rest of the application will use:
-
-FastAPI backend
-
-Uvicorn development server
-
-PostgreSQL database
-
-SQLAlchemy ORM
-
-Alembic database migrations
-
-PostgreSQL pgvector extension
-
-JWT-based authentication
-
-Password hashing with Argon2/Passlib
-
-Pydantic request/response validation
-
-Basic API endpoints
-
-Database models corresponding to the finalized Phase 0 schema
-
-Automated tests using PostgreSQL
-
-The important idea is that Phase 1 is the foundation, not the final application.
-
-Future functionality should be added on top of this foundation rather than replacing it unnecessarily.
-
-2. Technology Stack
-
-Python
-
-Python is the programming language used for the backend.
-
-It is also well suited to the AI/ML ecosystem that will be used in later phases.
-
-FastAPI
-
-FastAPI is the web framework.
-
-It receives HTTP requests, routes them to the appropriate Python functions, validates request data, and returns HTTP responses.
-
-For example:
-
-POST /auth/login
-        ↓
-FastAPI route
-        ↓
-Python authentication logic
-        ↓
-Database
-        ↓
-HTTP response
-
-Uvicorn
-
-Uvicorn is the ASGI server that runs the FastAPI application.
-
-Development command:
-
-uvicorn app.main:app --reload
-
-The application is then available at:
-
-http://127.0.0.1:8000
-
-PostgreSQL
-
-PostgreSQL is the application's relational database.
-
-It permanently stores application data instead of keeping it only in memory.
-
-The current development environment uses:
-
-PostgreSQL 13
-
-SQLAlchemy
-
-SQLAlchemy is the ORM (Object Relational Mapper).
-
-It allows the Python application to work with database models and queries without manually writing raw SQL for normal application operations.
-
-Conceptually:
-
-Python objects
-      ↓
-SQLAlchemy
-      ↓
-SQL
-      ↓
-PostgreSQL
-
-Alembic
-
-Alembic manages database schema migrations.
-
-Instead of manually creating or modifying tables, schema changes are represented as migrations.
-
-The current database can be initialized with:
-
-alembic upgrade head
-
-pgvector
-
-pgvector adds vector storage and similarity-search capabilities to PostgreSQL.
-
-This is important for the future AI/RAG portions of the application.
-
-There are two related pieces to understand:
-
-The PostgreSQL pgvector extension — installed on the PostgreSQL server.
-
-The Python pgvector package — installed in the Python virtual environment.
-
-They are not the same thing.
-
-The current development setup uses:
-
-PostgreSQL 13
-pgvector PostgreSQL extension 0.8.6
-
-Pydantic
-
-Pydantic is used by FastAPI for validating and structuring request and response data.
-
-It helps ensure that API data has the expected format.
-
-JWT
-
-JWT (JSON Web Token) is used for authentication.
-
-After a successful login, the backend issues an access token. Protected endpoints require the client to send that token.
-
-Argon2 / Passlib
-
-Passwords are not stored as plain text.
-
-The backend uses password hashing so that the original password is not stored directly in the database.
-
-pytest
-
-pytest is used for automated testing.
-
-The test suite uses a real PostgreSQL database because the application relies on PostgreSQL-specific functionality such as pgvector and JSONB.
-
-3. High-Level Architecture
-
-The current backend can be understood as:
-
-                    Frontend
-                       │
-                       │ HTTP request
-                       ▼
-                  ┌──────────┐
-                  │ FastAPI  │
-                  └────┬─────┘
-                       │
-                 Routes / Auth
-                       │
-                       ▼
-                Application Logic
-                       │
-                       ▼
-                  SQLAlchemy
-                       │
-                       ▼
-              PostgreSQL + pgvector
-
-In later phases, AI/OCR/RAG services will be added to this architecture.
-
-The important principle is:
-
+Architecture
 Frontend
-   ↓
-Backend API
-   ↓
-Application services
-   ↓
-Database / AI services
-   ↓
-Response
+   │
+   ▼
+FastAPI
+   │
+   ├── Auth/JWT
+   │      └── User DB
+   │
+   └── Inspection API
+          │
+          ├── PostgreSQL
+          │      ├── Inspections
+          │      ├── Inspection Images
+          │      ├── Extractions
+          │      └── Compliance Verdicts
+          │
+          └── Cloudflare R2
+                 └── Inspection Images
+                         │
+                         ▼
+                  Vision AI Extraction
+                         │
+                         ▼
+                Structured Declarations
+                         │
+                         ▼
+                  RAG Rule Retrieval
+                         │
+                         ▼
+               Compliance Verdict Engine
+                         │
+                         ▼
+                 PASS / ISSUE /
+                 REVIEW_REQUIRED
 
-4. Repository Structure
+The backend follows a layered architecture:
 
-The current backend is organized approximately as:
+Route → Service → Specialized Service → DB / External API
 
-backend/
-├── app/
-├── alembic/
-├── tests/
+Routes remain thin while extraction, embeddings, retrieval, RAG, storage, and verdict logic remain isolated in their respective services.
+
+Repository Structure
+SIH-26/backend/
+├── .env / .env.example
 ├── requirements.txt
 ├── alembic.ini
-├── .env.example
-├── .gitignore
-└── README.md
-
-app/
-
-Contains the FastAPI application and its Python code.
-
-This is where API routes, database configuration, models, schemas, authentication/security logic, and application functionality live.
-
-alembic/
-
-Contains database migration configuration and migration scripts.
-
-Migrations allow the database schema to be reproduced consistently on different machines.
-
-tests/
-
-Contains automated tests for the backend.
-
-requirements.txt
-
-Lists the Python packages required by the backend.
-
-alembic.ini
-
-Alembic configuration.
-
-.env.example
-
-Template showing which environment variables are required.
-
-Each developer should create their own .env from this template.
-
-.gitignore
-
-Specifies local files that should not be committed to Git.
-
-5. Local Development Setup
-
+├── alembic/
+│   └── versions/
+├── docs/
+│   └── phase5_criteria.md
+├── tests/
+└── app/
+    ├── main.py
+    ├── api/
+    │   ├── routes_auth.py
+    │   ├── routes_inspections.py
+    │   ├── routes_rag.py
+    │   ├── routes_extraction.py
+    │   └── routes_verdict.py
+    ├── auth/
+    │   └── deps.py
+    ├── db/
+    │   └── session.py
+    ├── models/
+    │   ├── user.py
+    │   ├── inspection.py
+    │   ├── inspection_image.py
+    │   ├── declaration.py
+    │   ├── checklist_result.py
+    │   ├── inspection_extraction.py
+    │   └── compliance_verdict.py
+    ├── schemas/
+    │   ├── auth.py
+    │   ├── inspection.py
+    │   └── verdict.py
+    └── services/
+        ├── storage_service.py
+        ├── embedding_service.py
+        ├── retrieval_service.py
+        ├── rag_service.py
+        ├── extraction_service.py
+        └── verdict_service.py
+Setup
 Prerequisites
-
-Every developer needs their own local development environment.
-
-Current project baseline:
-
-Python 3.12
-
-PostgreSQL 13
-
-pgvector PostgreSQL extension 0.8.6
-
+Python 3.12+
+PostgreSQL
+pgvector extension
 Git
 
-PostgreSQL credentials are local to each developer. Do not share or commit passwords.
+Create the database:
 
-Step 1 — Clone the repository
+createdb legal_metrology
 
-git clone <repository-url>
-cd legal_metrology/backend
+Or:
 
-Step 2 — Create a Python virtual environment
+CREATE DATABASE legal_metrology;
 
-On Windows:
+Create and activate the virtual environment:
 
 py -3.12 -m venv venv
-
-Activate it:
-
 venv\Scripts\activate
 
-You should see:
-
-(venv)
-
-at the beginning of the terminal prompt.
-
-Verify:
-
-python --version
-
-Expected:
-
-Python 3.12.x
-
-Step 3 — Install Python dependencies
+Install dependencies:
 
 pip install -r requirements.txt
+Environment Variables
 
-6. PostgreSQL Setup
+Copy .env.example to .env and configure:
 
-Each developer should have PostgreSQL installed locally.
+DATABASE_URL=postgresql+psycopg2://postgres:PASSWORD@localhost:5432/legal_metrology
 
-Create a database named:
-
-legal_metrology
-
-For example:
-
-createdb -U postgres legal_metrology
-
-Or create it through pgAdmin.
-
-The application expects PostgreSQL to be available on:
-
-localhost:5432
-
-7. pgvector Setup
-
-The PostgreSQL vector extension must be installed on the PostgreSQL server.
-
-This is different from installing the Python pgvector package.
-
-After installing the server-side extension, connect to the legal_metrology database and verify it:
-
-SELECT extversion
-FROM pg_extension
-WHERE extname = 'vector';
-
-The current development setup uses:
-
-0.8.6
-
-If necessary:
-
-CREATE EXTENSION vector;
-
-The migration also handles extension creation when the server-side extension files are available and the PostgreSQL role has sufficient privileges.
-
-8. Environment Variables
-
-Create your local environment file from the example:
-
-.env.example → .env
-
-The .env file is local and must not be committed.
-
-At minimum, configure:
-
-DATABASE_URL=postgresql+psycopg2://postgres:YOUR_PASSWORD@localhost:5432/legal_metrology
-
-JWT_SECRET=YOUR_LONG_RANDOM_SECRET
+JWT_SECRET=...
 JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=...
-
-Use your own PostgreSQL password.
-
-Do not copy another developer's .env.
-
-Do not commit real credentials or API keys.
-
-For a password containing URL-special characters such as @, :, /, #, %, ?, or &, make sure the password is URL-encoded when used inside DATABASE_URL.
-
-9. Run Database Migrations
-
-From the backend directory, with the virtual environment active:
-
-alembic upgrade head
-
-This creates the Phase 0 database schema required by the application, including the PostgreSQL/pgvector-specific components.
-
-You normally do not need to manually create application tables.
-
-Alembic is responsible for bringing the database schema to the required migration version.
-
-10. Start the Backend
-
-With the virtual environment active:
-
-uvicorn app.main:app --reload
-
-You should see something similar to:
-
-Uvicorn running on http://127.0.0.1:8000
-Application startup complete.
-
-11. Verify the Backend
-
-Root endpoint
-
-http://127.0.0.1:8000/
-
-Health endpoint
-
-http://127.0.0.1:8000/health
-
-Swagger API documentation
-
-http://127.0.0.1:8000/docs
-
-Swagger provides an interactive interface for testing the API.
-
-12. Authentication Flow
-
-Phase 1 implements JWT authentication.
-
-The basic flow is:
-
-Register
-   ↓
-Password is hashed
-   ↓
-User stored in PostgreSQL
-   ↓
-Login
-   ↓
-Password verified
-   ↓
-JWT access token generated
-   ↓
-Client stores token
-   ↓
-Client sends:
-Authorization: Bearer <token>
-   ↓
-FastAPI verifies token
-   ↓
-Protected endpoint is accessible
-
-Registration
-
-POST /auth/register
-
-Login
-
-POST /auth/login
-
-The login response contains an access_token.
-
-Current user
-
-GET /auth/me
-
-This endpoint requires a valid Bearer token.
-
-13. Current API Endpoints
-
-Phase 1 currently provides:
-
-Method
-
-Endpoint
-
-Purpose
-
-GET
-
-/
-
-Basic/root endpoint
-
-GET
-
-/health
-
-Health check
-
-POST
-
-/auth/register
-
-Register a user
-
-POST
-
-/auth/login
-
-Authenticate and receive JWT
-
-GET
-
-/auth/me
-
-Retrieve the authenticated user
-
-The exact request/response schemas can always be inspected through:
-
-http://127.0.0.1:8000/docs
-
-14. Database and Migration Architecture
-
-The database schema was finalized during Phase 0 and represented in Phase 1 through SQLAlchemy models and Alembic migrations.
-
-The migration establishes:
-
-Required tables
-
-Foreign keys
-
-Constraints
-
-Indexes
-
-Vector support
-
-HNSW vector indexing
-
-Inspection timestamp trigger functionality
-
-The application is intentionally PostgreSQL-specific because the schema uses PostgreSQL features such as pgvector and JSONB.
-
-15. Testing
-
-Tests use a real PostgreSQL database rather than SQLite.
-
-Create a separate test database:
-
-createdb -U postgres legal_metrology_test
-
-The test database connection should be configured through TEST_DATABASE_URL.
-
-Do not assume the PostgreSQL password is postgres.
-
-Then run:
-
-pytest -v
-
-The test database is separate from the main legal_metrology database so that test operations do not modify development data.
-
-16. Important Development Rules
-
-When developing future phases:
-
-Reuse the existing architecture
-
-Do not unnecessarily replace:
-
-FastAPI
-
-SQLAlchemy
-
-PostgreSQL
-
-Alembic
-
-JWT authentication
-
-pgvector
-
-Database changes
-
-If a future feature requires a schema change:
-
-Modify the appropriate SQLAlchemy model.
-
-Create an Alembic migration.
-
-Review the migration.
-
-Apply it with:
-
-alembic upgrade head
-
-Do not manually modify production/development tables and leave the migration history inconsistent.
-
-Environment variables
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+R2_ENDPOINT_URL=...
+R2_ACCOUNT_ID=...
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET_NAME=...
+
+AI_API_KEY=...
 
 Never commit:
 
 .env
-
-Never put passwords, API keys, JWT secrets, or other credentials into source code.
-
-17. Phase 2 — Developer Handoff
-
-What Phase 2 inherits from Phase 1
-
-Phase 2 developers do not need to build the backend foundation again.
-
-They already have:
-
-FastAPI
-    +
-PostgreSQL
-    +
-SQLAlchemy
-    +
-Alembic
-    +
-JWT authentication
-    +
+Database passwords
+JWT secrets
+Cloudflare R2 credentials
+AI API keys
 pgvector
 
-Phase 2 should build on these components.
+Verify pgvector:
 
-The authentication system should be reused for protected functionality rather than creating a second authentication mechanism.
+SELECT extversion
+FROM pg_extension
+WHERE extname = 'vector';
 
-Database operations should continue to use the existing SQLAlchemy/Alembic approach.
+If the extension is not enabled:
 
-18. What Phase 2 Is Intended To Add
+CREATE EXTENSION vector;
+Database Migrations
 
-Phase 1 deliberately does not implement the application's intelligence layer.
+Run:
 
-The next phases are expected to introduce functionality around:
+alembic upgrade head
 
-Documents / Package Images
-          ↓
-       OCR / Extraction
-          ↓
-    Structured Information
-          ↓
-   Legal Knowledge Retrieval
-          ↓
-    Embeddings / Vector Search
-          ↓
-        RAG / AI
-          ↓
- Compliance Analysis
-          ↓
-    Compliance Result
+Database schema changes must always be made through Alembic migrations.
 
-The exact implementation should follow the finalized project requirements.
+Start the Server
 
-These components should be treated as separate responsibilities rather than putting everything into one large FastAPI route.
+From backend/:
 
-19. Recommended Phase 2 Development Flow
+venv\Scripts\activate
+uvicorn app.main:app --reload
 
-Before implementing a feature, understand how it fits into the existing system.
+Server:
 
-A likely high-level flow is:
+http://127.0.0.1:8000
 
-User
- ↓
-Frontend
- ↓
-FastAPI endpoint
- ↓
-Authentication
- ↓
-Application/service logic
- ↓
-OCR / extraction / retrieval / AI
- ↓
-PostgreSQL + pgvector
- ↓
-Compliance result
- ↓
-FastAPI response
- ↓
-Frontend
+Swagger:
 
-Future developers should preserve this separation.
+http://127.0.0.1:8000/docs
+API Endpoints
+Method	Endpoint	Purpose
+GET	/	Root
+GET	/health	Health check
+POST	/auth/register	Register user
+POST	/auth/login	Login and receive JWT
+GET	/auth/me	Current authenticated user
+POST	/inspections/presigned-url	Generate R2 upload URL
+POST	/inspections	Create inspection + image records
+GET	/inspections	List officer's inspections
+POST	/rag/query	Query Legal Metrology RAG
+POST	/inspections/{id}/extract	Run Vision AI extraction
+POST	/inspections/{id}/verdict	Generate compliance verdict
 
-For example:
+Inspection-specific endpoints enforce ownership checks so an officer can only access their own inspection data.
 
-API routes should handle HTTP concerns.
+Phase 3 — RAG & Rule Retrieval
 
-Database models should represent persistent data.
+Legal Metrology rules are chunked, embedded, and stored in rules_chunks using pgvector for semantic similarity search.
 
-Database access should use SQLAlchemy.
+Pipeline
+Legal Metrology Rule Text
+        │
+        ▼
+Rule Chunking
+        │
+        ▼
+Gemini Embeddings
+        │
+        ▼
+rules_chunks + pgvector
+        │
+        ▼
+Retrieval Service
+        │
+        ▼
+RAG Service
+        │
+        ▼
+POST /rag/query
 
-Schema changes should use Alembic.
+The embedding service uses:
 
-OCR should have a defined processing layer.
+gemini-embedding-001
 
-Embedding/vector search should be isolated from HTTP routing.
+The current rule dataset contains 52 rule chunks with embeddings.
 
-LLM/RAG logic should not be scattered throughout unrelated endpoints.
+The retrieval service performs vector similarity search and returns the most relevant Legal Metrology clauses.
 
-Compliance logic should remain understandable and testable.
+The RAG service uses those retrieved rules as the legal context for answering compliance-related questions.
 
-20. Before Starting Phase 2
+RAG ingestion
 
-A developer joining the project should first understand:
+Rule ingestion is performed using:
 
-FastAPI routing
+python -m scripts.ingest_rules
 
-Request/response schemas
+The ingestion process:
 
-SQLAlchemy models
+Loads the rule chunks.
+Generates embeddings.
+Stores the rule text and embeddings in PostgreSQL.
+Makes the rules available to semantic retrieval.
+Phase 4 — Vision AI Extraction
 
-Database sessions
+Phase 4 extracts structured package declarations from inspection images.
 
-Alembic migrations
+It does not determine legal compliance.
 
-JWT authentication/dependencies
+Pipeline
+Inspection Images
+       │
+       ▼
+Cloudflare R2
+       │
+       ▼
+POST /inspections/{id}/extract
+       │
+       ▼
+Extraction Service
+       │
+       ▼
+Google Gemini Vision AI
+       │
+       ▼
+Structured JSON
+       │
+       ▼
+Pydantic Validation
+       │
+       ▼
+inspection_extractions
+Extraction Fields
 
-PostgreSQL/pgvector
+The extraction pipeline handles fields including:
 
-The finalized Phase 0 schema
+product_name
+generic_name
+manufacturer_name
+manufacturer_address
+packer_name
+packer_address
+importer_name
+importer_address
+country_of_origin
+net_quantity
+net_quantity_unit
+dimensions
+mrp
+unit_sale_price
+manufacture_date
+packing_date
+import_date
+best_before_or_use_by
+consumer_care
+batch_or_lot_number
 
-The application's intended user workflow
+Each field contains:
 
-Then begin Phase 2 work.
+value
+confidence
+status
 
-Do not rewrite Phase 1 simply to become familiar with the code.
+where status can be:
 
-21. Team Workflow
+visible
+not_visible
+illegible
 
-Each teammate should have their own local:
+The model is explicitly instructed to return null rather than invent or guess information that cannot be reliably read from the package.
 
-Python environment
-PostgreSQL installation
-legal_metrology database
+Storage
+
+Extraction results are stored in:
+
+inspection_extractions
+
+with the extraction data stored as PostgreSQL JSONB.
+
+Phase 5 — Compliance Verdict Engine
+
+Phase 5 converts Phase 4 extracted declarations and Phase 3 retrieved Legal Metrology rules into compliance verdicts.
+
+Possible verdicts are:
+
+PASS
+ISSUE
+REVIEW_REQUIRED
+Core Principle
+
+The team defines the compliance criteria. The AI implements those criteria and does not invent legal requirements.
+
+The verdict engine does not use the model's general knowledge as the legal source. When a legal rule is required, it is retrieved from the RAG pipeline.
+
+Workflow
+Phase 4 Extraction
+        │
+        ├── Extracted Declaration
+        │
+        ▼
+Phase 3 RAG Retrieval
+        │
+        ├── Relevant Legal Rule
+        │
+        ▼
+Team-Defined Criteria
+        │
+        ▼
+Compliance Verdict Engine
+        │
+        ├── PASS
+        ├── ISSUE
+        └── REVIEW_REQUIRED
+        │
+        ▼
+ComplianceVerdict
+        │
+        ▼
+PostgreSQL
+Current Checklist Categories
+
+The Phase 5 engine evaluates categories including:
+
+MRP
+Net Quantity
+Manufacturer Details
+Country of Origin
+Consumer Care
+
+For every category, the engine retrieves a relevant Legal Metrology rule and applies the defined compliance logic.
+
+Verdict Storage
+
+Verdicts are stored in:
+
+compliance_verdicts
+
+and linked to the corresponding inspection.
+
+The verdict response contains:
+
+inspection_id
+overall_status
+categories
+created_at
+
+Each category contains:
+
+category
+verdict
+reasoning
+rule_reference
+
+This provides traceability from:
+
+Inspection
+    ↓
+Extracted declaration
+    ↓
+Retrieved legal rule
+    ↓
+Compliance reasoning
+    ↓
+Final verdict
+Example
+
+For an inspection where MRP is visible but net quantity and manufacturer information are missing:
+
+MRP                   → PASS
+Net Quantity          → ISSUE
+Manufacturer Details  → ISSUE
+Country of Origin     → PASS
+Consumer Care         → PASS
+
+Overall Status        → ISSUE
+
+The API also returns the retrieved rule text used for each category, allowing the team to inspect why a particular verdict was produced.
+
+Endpoint
+POST /inspections/{inspection_id}/verdict
+
+The endpoint:
+
+Authenticates the officer.
+Verifies inspection ownership.
+Loads the latest extraction.
+Retrieves relevant Legal Metrology rules through RAG.
+Applies the defined compliance criteria.
+Stores the verdict.
+Returns the inspection-level compliance result.
+Phase 5 Validation
+
+Phase 5 was validated end-to-end using a real package image.
+
+The complete pipeline was tested as:
+
+Package Image
+      ↓
+Cloudflare R2
+      ↓
+Vision AI Extraction
+      ↓
+Structured Declaration
+      ↓
+RAG Rule Retrieval
+      ↓
+Compliance Verdict
+      ↓
+Swagger API Response
+
+The resulting Swagger response demonstrated category-level PASS and ISSUE results together with the corresponding retrieved Legal Metrology rule references.
+
+Engineering Principles
+1. Thin Routes
+Route → Service → Specialized Service → DB / External API
+
+API routes should coordinate operations rather than contain business logic.
+
+2. Ownership Checks
+
+Inspection-specific endpoints verify:
+
+inspection.officer_id == current_user.id
+
+before accessing or modifying inspection data.
+
+3. Traceability
+
+Every compliance decision should be traceable back to:
+
+Source Image
+     ↓
+Extracted Data
+     ↓
+Retrieved Legal Rule
+     ↓
+Verdict
+4. Replaceable Providers
+
+AI, embedding, OCR/Vision, and storage providers are isolated behind service modules so they can be replaced without restructuring the API.
+
+5. No Manual Schema Changes
+
+Database changes must be introduced through Alembic migrations.
+
+Testing Strategy
+
+Testing follows:
+
+Unit
+  ↓
+Service
+  ↓
+API
+  ↓
+Database
+  ↓
+End-to-End
+
+The current automated test suite passes:
+
+11 passed
+
+with only non-blocking dependency/deprecation warnings.
+
+Phase 5 was also manually validated through Swagger using:
+
+authenticated inspection access
+R2 image retrieval
+Vision AI extraction
+RAG rule retrieval
+compliance verdict generation
+PostgreSQL verdict persistence
+Phase 5 Definition of Done
+
+Phase 5 is considered complete because:
+
+✅ Compliance criteria were defined for the implemented checklist categories.
+✅ Verdict engine consumes Phase 4 extraction output.
+✅ Verdict engine uses Phase 3 RAG retrieval.
+✅ Retrieved legal rules are included in verdict results.
+✅ PASS / ISSUE / REVIEW_REQUIRED outcomes are supported.
+✅ Verdicts are stored and linked to inspections.
+✅ API exposes compliance results.
+✅ End-to-end package validation was performed.
+✅ Automated test suite passes.
+✅ Phase 5 implementation is committed to the repository.
+Security
+
+Never commit secrets or credentials.
+
+The following must remain local:
+
 .env
+Database passwords
+JWT secrets
+Cloudflare R2 credentials
+AI API keys
 
-Typical workflow:
+The repository's .gitignore excludes .env and Python-generated files.
 
-Clone repository
-      ↓
-Create venv
-      ↓
-Install requirements
-      ↓
-Configure local .env
-      ↓
-Set up PostgreSQL + pgvector
-      ↓
-Run alembic upgrade head
-      ↓
-Run tests
-      ↓
-Start FastAPI
-      ↓
-Develop Phase 2
+Current Backend Flow
 
-For Git:
+The complete backend now supports:
 
-main
- │
- ├── phase-2-feature-a
- ├── phase-2-feature-b
- └── phase-2-feature-c
+             ┌──────────────┐
+             │ Package Image│
+             └──────┬───────┘
+                    ↓
+             ┌──────────────┐
+             │ Cloudflare R2│
+             └──────┬───────┘
+                    ↓
+             ┌──────────────┐
+             │ Vision AI    │
+             │ Extraction   │
+             └──────┬───────┘
+                    ↓
+             ┌──────────────┐
+             │ Declarations │
+             └──────┬───────┘
+                    ↓
+             ┌──────────────┐
+             │ RAG Retrieval│
+             └──────┬───────┘
+                    ↓
+             ┌──────────────┐
+             │ Legal Rules  │
+             └──────┬───────┘
+                    ↓
+             ┌──────────────┐
+             │ Compliance   │
+             │ Verdict      │
+             └──────┬───────┘
+                    ↓
+             ┌──────────────┐
+             │ PASS / ISSUE │
+             │ / REVIEW     │
+             └──────────────┘
 
-Use feature branches for development and merge completed work into the team's main development branch according to the team's agreed workflow.
-
-22. Phase 1 Security Notes
-
-Phase 1 includes password hashing and JWT authentication, but production security is not considered completely solved merely because those technologies are present.
-
-Important considerations for later deployment include:
-
-Strong random JWT secret
-
-HTTPS
-
-Appropriate JWT expiration
-
-Token revocation/refresh strategy if required
-
-Rate limiting
-
-Secure secret management
-
-Proper production database credentials
-
-Appropriate authorization rules
-
-Review of admin-role handling
-
-The development server and local HTTP setup are not a production deployment configuration.
-
-23. Troubleshooting
-
-password authentication failed for user "postgres"
-
-Check that DATABASE_URL contains the correct password for your local PostgreSQL installation.
-
-Do not change the application code to accommodate an incorrect local password.
-
-CREATE EXTENSION vector fails
-
-The PostgreSQL server-side pgvector extension may not be installed.
-
-Installing the Python pgvector package alone is not sufficient.
-
-Check:
-
-SELECT extversion
-FROM pg_extension
-WHERE extname = 'vector';
-
-alembic upgrade head fails on vector/HNSW functionality
-
-Verify:
-
-SELECT extversion
-FROM pg_extension
-WHERE extname = 'vector';
-
-Also verify that the Python pgvector package and PostgreSQL server extension are compatible.
-
-Python version problems
-
-Check:
-
-python --version
-
-The current project baseline is Python 3.12.
-
-If using Windows and multiple Python versions are installed:
-
-py -3.12 -m venv venv
-
-24. Final Phase 1 State
-
-At the end of Phase 1, the project has a functioning backend foundation:
-
-                 LEGAL METROLOGY
-                       │
-                       ▼
-                  FastAPI API
-                       │
-          ┌────────────┼────────────┐
-          │            │            │
-          ▼            ▼            ▼
-     Authentication  Database     Future AI
-          │            │            │
-         JWT       PostgreSQL    OCR / RAG /
-                     + pgvector   Compliance
-
-Phase 1 is COMPLETE.
-
-Phase 2 is the next development stage and has NOT yet been implemented.
-
-The purpose of this repository at this point is to give every team member a reproducible backend foundation from which Phase 2 can be developed.
+The backend now provides the complete Phase 0–5 foundation required for the Legal Metrology AI Inspection workflow.
