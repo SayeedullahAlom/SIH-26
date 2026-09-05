@@ -1,8 +1,8 @@
-import base64
 import json
 import time
 
 from google import genai
+from google.genai import types
 
 from app.core.config import settings
 from app.schemas.extraction import ExtractionResult
@@ -192,46 +192,55 @@ Return JSON only.
 """
 
 
-def extract_from_images(images: list[tuple[bytes, str]]) -> ExtractionResult:
-    input_parts = [
-        {
-            "type": "text",
-            "text": EXTRACTION_PROMPT,
-        }
-    ]
-
-    for image_bytes, mime_type in images:
-        input_parts.append(
-            {
-                "type": "image",
-                "data": base64.b64encode(image_bytes).decode("utf-8"),
-                "mime_type": mime_type,
-            }
-        )
+def extract_from_images(
+    images: list[tuple[bytes, str]]
+) -> ExtractionResult:
 
     for attempt in range(2):
         try:
-            print(f"Vision AI attempt {attempt + 1}: sending request...")
-
-            interaction = client.interactions.create(
-                model="gemini-3.5-flash",
-                input=input_parts,
-                response_format={
-                    "type": "text",
-                    "mime_type": "application/json",
-                    "schema": ExtractionResult.model_json_schema(),
-                },
+            print(
+                f"Vision AI attempt {attempt + 1}: sending request..."
             )
 
-            print(f"Vision AI attempt {attempt + 1}: success")
+            # Build Gemini multimodal request
+            response_parts = [
+                types.Part.from_text(
+                    text=EXTRACTION_PROMPT
+                )
+            ]
 
-            raw_text = interaction.output_text
+            # Add all package images
+            for image_bytes, mime_type in images:
+                response_parts.append(
+                    types.Part.from_bytes(
+                        data=image_bytes,
+                        mime_type=mime_type,
+                    )
+                )
+
+            # Call Gemini Vision model
+            response = client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=response_parts,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=ExtractionResult,
+                ),
+            )
+
+            print(
+                f"Vision AI attempt {attempt + 1}: success"
+            )
+
+            # Extract response text
+            raw_text = response.text
 
             if not raw_text:
                 raise ValueError(
                     "Vision AI returned an empty response"
                 )
 
+            # Parse JSON
             try:
                 data = json.loads(raw_text)
 
@@ -240,6 +249,7 @@ def extract_from_images(images: list[tuple[bytes, str]]) -> ExtractionResult:
                     "Vision AI returned invalid JSON"
                 ) from exc
 
+            # Validate against Pydantic schema
             return ExtractionResult.model_validate(data)
 
         except Exception as exc:
@@ -249,8 +259,13 @@ def extract_from_images(images: list[tuple[bytes, str]]) -> ExtractionResult:
             )
 
             if attempt == 0:
-                print("Waiting 3 seconds before retry...")
+                print(
+                    "Waiting 3 seconds before retry..."
+                )
                 time.sleep(3)
+
             else:
-                print("Vision AI failed after 2 attempts.")
+                print(
+                    "Vision AI failed after 2 attempts."
+                )
                 raise

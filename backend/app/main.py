@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from app.api.routes_extraction import router as extraction_router
 from app.api.routes_auth import router as auth_router
 from app.api.routes_rag import router as rag_router
+from app.api.routes_verdict import router as verdict_router
 
 from app.core.config import settings
 
@@ -16,6 +17,7 @@ app = FastAPI(
 app.include_router(auth_router)
 app.include_router(rag_router)
 app.include_router(extraction_router)
+app.include_router(verdict_router)
 
 
 @app.get("/")

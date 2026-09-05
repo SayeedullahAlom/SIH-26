@@ -3,8 +3,8 @@ import uuid
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
-from app.db.base import Base
+from app.db.base import Base   # ← was app.db.session
+from app.models.compliance_verdict import ComplianceVerdict
 
 
 class Inspection(Base):
@@ -48,6 +48,11 @@ class Inspection(Base):
     "InspectionExtraction",
     back_populates="inspection",
     cascade="all, delete-orphan",
+)
+    verdicts = relationship(
+    "ComplianceVerdict",
+    back_populates="inspection",
+    cascade="all, delete-orphan"
 )
 
     __table_args__ = (

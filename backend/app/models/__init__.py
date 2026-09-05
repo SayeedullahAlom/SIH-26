@@ -6,7 +6,7 @@ from app.models.report import Report
 from app.models.rules_chunk import RulesChunk
 from app.models.user import User
 from app.models.inspection_extraction import InspectionExtraction
-
+from app.models.compliance_verdict import ComplianceVerdict
 __all__ = [
     "User",
     "RulesChunk",
