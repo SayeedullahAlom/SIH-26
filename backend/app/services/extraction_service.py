@@ -1,24 +1,21 @@
-import base64
 import json
 import time
 
 from google import genai
+from google.genai import types
 
 from app.core.config import settings
 from app.schemas.extraction import ExtractionResult
-
 
 AI_API_KEY = settings.AI_API_KEY
 
 if not AI_API_KEY:
     raise RuntimeError("AI_API_KEY is not set")
 
-
 client = genai.Client(
     api_key=AI_API_KEY,
-    http_options={"timeout": 60000},
+    http_options={"timeout": 120000},
 )
-
 
 EXTRACTION_PROMPT = """
 You are a Legal Metrology package-label information extraction system.
@@ -50,18 +47,9 @@ For every field return:
 }
 
 Possible status values are ONLY:
-
 "visible"
 "not_visible"
 "illegible"
-
-Use "visible" when the declaration can be clearly read.
-
-Use "not_visible" when the declaration is not present or its value is
-not visible in the provided image(s).
-
-Use "illegible" when the declaration appears to be present but the
-image quality is insufficient to reliably read it.
 
 When status is "not_visible":
 - value MUST be null
@@ -79,166 +67,67 @@ When status is "visible":
 ============================================================
 FIELDS TO EXTRACT
 ============================================================
-
 1. product_name
-   Extract the short product or brand name printed on the package.
-   Return only the name itself.
-   Do not return explanations, instructions, schema text, or other text.
-   If the name is not clearly visible, return null.
-
 2. generic_name
-   The common or generic name of the commodity.
-
 3. manufacturer_name
-   Name of the manufacturer, if printed.
-
 4. manufacturer_address
-   Complete manufacturer address, if printed.
-
 5. packer_name
-   Name of the packer, if separately stated.
-
 6. packer_address
-   Complete packer address, if separately stated.
-
 7. importer_name
-   Name of the importer, if applicable and printed.
-
 8. importer_address
-   Complete importer address, if applicable and printed.
-
 9. country_of_origin
-   Country of origin, particularly where the commodity is imported,
-   if explicitly printed.
-
 10. net_quantity
-    The numerical quantity printed for the package.
-    Preserve the printed number only.
-
 11. net_quantity_unit
-    The unit associated with the net quantity, such as g, kg, ml,
-    L, cm, m, or number.
-
 12. dimensions
-    Dimensions or size information printed on the package where
-    applicable.
-
 13. mrp
-    Maximum Retail Price or equivalent price declaration.
-    Preserve the printed value and wording.
-
 14. unit_sale_price
-    Unit sale price, if explicitly printed.
-
 15. manufacture_date
-    Month/year or date of manufacture, if explicitly printed.
-
 16. packing_date
-    Month/year or date of packing/pre-packing, if explicitly printed.
-
 17. import_date
-    Month/year or date of import, if explicitly printed.
-
 18. best_before_or_use_by
-    Any explicitly printed "Best Before", "Use By", or equivalent
-    shelf-life/date declaration.
-
 19. consumer_care
-    Consumer-care information such as address, telephone number,
-    email address, or other contact details printed for consumers.
-
 20. batch_or_lot_number
-    Batch number, lot number, or equivalent identification number
-    if explicitly printed.
-
-============================================================
-MULTIPLE IMAGES
-============================================================
-
-The package may be represented by multiple images.
-
-Consider ALL provided images together.
-
-If a declaration appears in one image, extract it even if it is absent
-from another image.
-
-Do not duplicate information merely because it appears in multiple
-images.
-
-If conflicting values appear across images, use the clearest/readable
-printed value and preserve the evidence rather than guessing.
-
-============================================================
-IMPORTANT
-============================================================
-
-Extract ONLY what is actually visible in the provided image(s).
-
-Do not use your knowledge of the product or manufacturer to fill
-missing fields.
-
-For example, if a package does not visibly show its net quantity,
-return:
-
-{
-    "value": null,
-    "confidence": null,
-    "status": "not_visible"
-}
-
-Do not guess the quantity based on the product.
 
 Return JSON only.
 """
 
 
 def extract_from_images(images: list[tuple[bytes, str]]) -> ExtractionResult:
-    input_parts = [
-        {
-            "type": "text",
-            "text": EXTRACTION_PROMPT,
-        }
-    ]
+    contents: list[types.Part | str] = [EXTRACTION_PROMPT]
 
     for image_bytes, mime_type in images:
-        input_parts.append(
-            {
-                "type": "image",
-                "data": base64.b64encode(image_bytes).decode("utf-8"),
-                "mime_type": mime_type,
-            }
+        contents.append(
+            types.Part.from_bytes(
+                data=image_bytes,
+                mime_type=mime_type,
+            )
         )
 
     for attempt in range(2):
         try:
             print(f"Vision AI attempt {attempt + 1}: sending request...")
 
-            interaction = client.interactions.create(
-                model="gemini-3.5-flash",
-                input=input_parts,
-                response_format={
-                    "type": "text",
-                    "mime_type": "application/json",
-                    "schema": ExtractionResult.model_json_schema(),
-                },
+            config = types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=ExtractionResult,
+            )
+
+            response = client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=contents,
+                config=config,
             )
 
             print(f"Vision AI attempt {attempt + 1}: success")
 
-            raw_text = interaction.output_text
-
+            raw_text = response.text
             if not raw_text:
-                raise ValueError(
-                    "Vision AI returned an empty response"
-                )
+                raise ValueError("Vision AI returned an empty response")
 
             try:
                 data = json.loads(raw_text)
-
             except json.JSONDecodeError as exc:
-                raise ValueError(
-                    "Vision AI returned invalid JSON"
-                ) from exc
+                raise ValueError("Vision AI returned invalid JSON") from exc
 
             return ExtractionResult.model_validate(data)
 
