@@ -32,7 +32,9 @@ export default function InspectionsList() {
               className="border p-3 rounded flex justify-between hover:bg-gray-50"
             >
               <span>{i.product_name || "Unnamed product"}</span>
-              <span className="text-sm text-gray-600">{i.status}</span>
+              <span className="text-sm text-gray-600">
+              {i.overall_result || i.status}
+              </span>
             </Link>
           </li>
         ))}
