@@ -22,8 +22,10 @@ def retrieve_relevant_rules(query: str, top_k: int = 5):
     """
 
     # 1. Convert the user's query into an embedding
-    query_embedding = get_embedding(query)
-
+    query_embedding = get_embedding(
+    query,
+    task_type="RETRIEVAL_QUERY",
+    )
     # 2. Connect to PostgreSQL
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()

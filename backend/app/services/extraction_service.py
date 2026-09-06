@@ -93,10 +93,12 @@ Return JSON only.
 
 
 def extract_from_images(images: list[tuple[bytes, str]]) -> ExtractionResult:
-    contents: list[types.Part | str] = [EXTRACTION_PROMPT]
+    response_parts: list[types.Part] = [
+        types.Part.from_text(text=EXTRACTION_PROMPT)
+    ]
 
     for image_bytes, mime_type in images:
-        contents.append(
+        response_parts.append(
             types.Part.from_bytes(
                 data=image_bytes,
                 mime_type=mime_type,
@@ -107,15 +109,13 @@ def extract_from_images(images: list[tuple[bytes, str]]) -> ExtractionResult:
         try:
             print(f"Vision AI attempt {attempt + 1}: sending request...")
 
-            config = types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=ExtractionResult,
-            )
-
             response = client.models.generate_content(
                 model="gemini-3.6-flash",
-                contents=contents,
-                config=config,
+                contents=response_parts,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=ExtractionResult,
+                ),
             )
 
             print(f"Vision AI attempt {attempt + 1}: success")
