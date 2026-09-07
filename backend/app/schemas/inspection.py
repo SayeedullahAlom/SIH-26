@@ -1,7 +1,19 @@
 import uuid
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
+from typing import List, Optional
+from pydantic import BaseModel
+
+class CategoryVerdictOverride(BaseModel):
+    category: str
+    status: str
+    notes: Optional[str] = None
+
+class OfficerOverrideRequest(BaseModel):
+    overall_result: str
+    category_verdicts: List[CategoryVerdictOverride]
+
 
 SideType = Literal["front", "back", "left", "right", "top", "bottom", "other"]
 
@@ -51,3 +63,5 @@ class InspectionResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     images: List[InspectionImageResponse] = []
+    extractions: List[Any] = []
+    verdicts: List[Any] = []

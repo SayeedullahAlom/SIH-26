@@ -79,7 +79,9 @@ def create_inspection(
         overall_result=inspection.overall_result,
         created_at=inspection.created_at,
         updated_at=inspection.updated_at,
-        images=image_responses
+        images=image_responses,
+        extractions=[],
+        verdicts=[],
     )
 
 
@@ -89,7 +91,7 @@ def get_inspection(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Retrieve an inspection and generate fresh presigned viewing URLs for images."""
+    """Retrieve an inspection, presigned viewing URLs, extractions, and verdicts."""
     inspection = db.query(Inspection).filter(
         Inspection.id == inspection_id,
         Inspection.officer_id == current_user.id
@@ -109,6 +111,27 @@ def get_inspection(
         for img in inspection.images
     ]
 
+    extraction_records = [
+        {
+            "id": str(e.id),
+            "extraction_data": e.extraction_data,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in (inspection.extractions or [])
+    ]
+
+    verdict_records = [
+        {
+            "id": str(v.id),
+            "category": v.category,
+            "verdict": v.verdict,
+            "reasoning": v.reasoning,
+            "rule_reference": v.rule_reference,
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+        }
+        for v in (inspection.verdicts or [])
+    ]
+
     return InspectionResponse(
         id=inspection.id,
         officer_id=inspection.officer_id,
@@ -118,7 +141,9 @@ def get_inspection(
         overall_result=inspection.overall_result,
         created_at=inspection.created_at,
         updated_at=inspection.updated_at,
-        images=image_responses
+        images=image_responses,
+        extractions=extraction_records,
+        verdicts=verdict_records,
     )
 
 
@@ -156,7 +181,9 @@ def list_inspections(
                 overall_result=insp.overall_result,
                 created_at=insp.created_at,
                 updated_at=insp.updated_at,
-                images=image_responses
+                images=image_responses,
+                extractions=[],
+                verdicts=[],
             )
         )
     return results
