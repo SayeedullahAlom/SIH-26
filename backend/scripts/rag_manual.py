@@ -1,12 +1,7 @@
 from app.services.rag_service import generate_rag_answer
 
 
-queries = [
-    "MRP declaration requirement",
-    "retail sale price declaration",
-    "maximum retail price declaration",
-]
-
+queries = ""
 print("\n")
 print("=" * 70)
 print("RAG TEST")
