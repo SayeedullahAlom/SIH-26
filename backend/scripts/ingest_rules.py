@@ -68,7 +68,8 @@ def main():
 
     print("Connecting to PostgreSQL...")
 
-    conn = psycopg2.connect(DATABASE_URL)
+    clean_db_url = str(DATABASE_URL).replace("postgresql+psycopg2://", "postgresql://")
+    conn = psycopg2.connect(clean_db_url)
     cur = conn.cursor()
 
     print("PostgreSQL connection successful.")

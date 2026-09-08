@@ -1,5 +1,4 @@
 import os
-
 import psycopg2
 from dotenv import load_dotenv
 
@@ -13,6 +12,9 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set")
 
+# Normalize SQLAlchemy URL scheme to standard PostgreSQL URI for psycopg2
+RAW_DB_URL = DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://")
+
 
 def retrieve_relevant_rules(query: str, top_k: int = 5):
     """
@@ -23,11 +25,12 @@ def retrieve_relevant_rules(query: str, top_k: int = 5):
 
     # 1. Convert the user's query into an embedding
     query_embedding = get_embedding(
-    query,
-    task_type="RETRIEVAL_QUERY",
+        query,
+        task_type="RETRIEVAL_QUERY",
     )
-    # 2. Connect to PostgreSQL
-    conn = psycopg2.connect(DATABASE_URL)
+
+    # 2. Connect to PostgreSQL using standard URI
+    conn = psycopg2.connect(RAW_DB_URL)
     cur = conn.cursor()
 
     # 3. Search for the most similar rule chunks
