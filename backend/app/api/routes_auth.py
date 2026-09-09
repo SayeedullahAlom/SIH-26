@@ -51,15 +51,18 @@ class UserProfileRead(BaseModel):
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
-    # Registration always creates an 'officer' account. We deliberately
-    # ignore/reject a client-supplied role='admin' here rather than trust
-    # the request body - admin promotion should be a separate, privileged
-    # operation in a later phase, not something self-service registration
-    # can grant. See the security checklist for why this matters.
     if payload.role == "admin":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Admin accounts cannot be created via self-registration.",
+        )
+
+    # Explicit check to verify if email already exists
+    existing_user = db.query(User).filter(User.email == payload.email).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
         )
 
     user = User(
@@ -71,11 +74,13 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     db.add(user)
     try:
         db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
+        error_msg = str(exc.orig) if hasattr(exc, "orig") else str(exc)
+        print(f"REGISTRATION INTEGRITY ERROR: {error_msg}")
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Registration failed due to database constraint: {error_msg}",
         )
     db.refresh(user)
     return user
@@ -85,8 +90,6 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     user = db.query(User).filter(User.email == payload.email).first()
 
-    # Same error for "no such user" and "wrong password" - never reveal
-    # which one it was, to avoid leaking which emails are registered.
     invalid_credentials = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Incorrect email or password.",
