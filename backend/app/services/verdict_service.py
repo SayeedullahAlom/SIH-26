@@ -60,7 +60,7 @@ DECLARATION_RULES = {
 
 
 # ============================================================
-# EXTRACTION HELPERS
+# EXTRACTION HELPERS (OFFICER OVERRIDE AWARE)
 # ============================================================
 
 def _field(
@@ -73,16 +73,27 @@ def _field(
     if not isinstance(raw, dict):
         return {
             "value": None,
+            "raw_value": None,
             "confidence": None,
             "status": "not_visible",
+            "is_edited": False,
         }
 
+    # Prioritize officer edited_value for compliance logic if present
+    effective_value = (
+        raw.get("edited_value")
+        if raw.get("edited_value") is not None
+        else raw.get("value")
+    )
+
     return {
-        "value": raw.get("value"),
+        "value": effective_value,
+        "raw_value": raw.get("raw_value", raw.get("value")),
         "confidence": raw.get("confidence"),
         "status": str(
             raw.get("status", "not_visible")
         ).lower(),
+        "is_edited": bool(raw.get("is_edited", False)),
     }
 
 

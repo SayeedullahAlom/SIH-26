@@ -111,23 +111,34 @@ def get_inspection(
         for img in inspection.images
     ]
 
+    # Sort chronologically so latest extraction is guaranteed to be at the end
+    sorted_extractions = sorted(
+        inspection.extractions or [],
+        key=lambda x: str(x.created_at or "")
+    )
+
     extraction_records = [
         {
             "id": str(e.id),
             "extraction_data": e.extraction_data,
             "created_at": e.created_at.isoformat() if e.created_at else None,
         }
-        for e in (inspection.extractions or [])
+        for e in sorted_extractions
     ]
 
     verdict_records = [
         {
-            "id": str(v.id),
+            "id": v.id,
+            "inspection_id": v.inspection_id,
             "category": v.category,
             "verdict": v.verdict,
             "reasoning": v.reasoning,
+            "evidence_field": v.evidence_field,
+            "evidence_value": v.evidence_value,
             "rule_reference": v.rule_reference,
-            "created_at": v.created_at.isoformat() if v.created_at else None,
+            "officer_verdict": v.officer_verdict,
+            "officer_remarks": v.officer_remarks,
+            "created_at": v.created_at,
         }
         for v in (inspection.verdicts or [])
     ]

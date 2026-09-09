@@ -49,6 +49,39 @@ async function fetchBase64Image(url: string): Promise<string | null> {
   }
 }
 
+// Draws the State Emblem of India (Ashoka Lion Capital crest) procedurally
+function drawStateEmblem(doc: jsPDF, centerX: number, topY: number) {
+  doc.saveGraphicsState();
+  doc.setDrawColor(25, 25, 25);
+  doc.setFillColor(30, 30, 30);
+
+  // Capital Top Canopy (Abacus & Lions representation)
+  doc.setLineWidth(0.4);
+  doc.rect(centerX - 5.5, topY + 0.5, 11, 6, "S");
+  doc.line(centerX - 1.8, topY + 0.5, centerX - 1.8, topY + 6.5);
+  doc.line(centerX + 1.8, topY + 0.5, centerX + 1.8, topY + 6.5);
+
+  // Central Ashoka Chakra on abacus
+  doc.circle(centerX, topY + 8.5, 1.7, "S");
+  doc.circle(centerX, topY + 8.5, 0.4, "FD");
+
+  // Galloping Horse (Left) & Bull (Right) symbolic fluting
+  doc.setLineWidth(0.3);
+  doc.line(centerX - 5.2, topY + 8.2, centerX - 2.8, topY + 8.2);
+  doc.line(centerX + 2.8, topY + 8.2, centerX + 5.2, topY + 8.2);
+
+  // Base Pedestal
+  doc.rect(centerX - 6.5, topY + 10.5, 13, 1.2, "FD");
+
+  // National Motto: "सत्यमेव जयते" / SATYAMEVA JAYATE
+  doc.setFont("times", "bold");
+  doc.setFontSize(5.8);
+  doc.setTextColor(40, 40, 40);
+  doc.text("सत्यमेव जयते", centerX, topY + 14.2, { align: "center" });
+
+  doc.restoreGraphicsState();
+}
+
 export async function generateComplianceReport({
   inspection,
   extraction,
@@ -70,7 +103,7 @@ export async function generateComplianceReport({
     (overallStatus || "").toUpperCase() === "COMPLIANT";
 
   const drawPageBorders = (targetDoc: jsPDF) => {
-    targetDoc.setLineWidth(0.6);
+    targetDoc.setLineWidth(0.7);
     targetDoc.setDrawColor(20, 20, 20);
     targetDoc.rect(8, 8, pageWidth - 16, pageHeight - 16);
     targetDoc.setLineWidth(0.2);
@@ -79,108 +112,118 @@ export async function generateComplianceReport({
 
   drawPageBorders(doc);
 
-  // Government Header
+  // 1. National Emblem
+
+  // 2. Government Letterhead
   doc.setFont("times", "bold");
   doc.setFontSize(10.5);
-  doc.text("GOVERNMENT OF INDIA", pageWidth / 2, 16, { align: "center" });
+  doc.setTextColor(15, 15, 15);
+  doc.text("GOVERNMENT OF INDIA", pageWidth / 2, 30.5, {
+    align: "center",
+  });
 
-  doc.setFontSize(11.5);
+  doc.setFontSize(11);
   doc.text(
     "MINISTRY OF CONSUMER AFFAIRS, FOOD & PUBLIC DISTRIBUTION",
     pageWidth / 2,
-    21.5,
+    35.5,
     { align: "center" }
   );
 
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.text(
     "DEPARTMENT OF CONSUMER AFFAIRS — LEGAL METROLOGY DIVISION",
     pageWidth / 2,
-    26.5,
+    40,
     { align: "center" }
   );
 
   doc.setFont("times", "normal");
-  doc.setFontSize(7.5);
+  doc.setFontSize(7.2);
   doc.text(
-    "[Enforcement under The Legal Metrology Act, 2009 & Packaged Commodities Rules, 2011]",
+    "[Statutory Enforcement under The Legal Metrology Act, 2009 & Packaged Commodities Rules, 2011]",
     pageWidth / 2,
-    30.5,
+    44,
     { align: "center" }
   );
 
-  // Double Divider
-  doc.setLineWidth(0.4);
-  doc.line(14, 33, pageWidth - 14, 33);
+  // Double Ornamental Dividing Rules
+  doc.setLineWidth(0.5);
+  doc.line(14, 46.5, pageWidth - 14, 46.5);
   doc.setLineWidth(0.15);
-  doc.line(14, 34, pageWidth - 14, 34);
+  doc.line(14, 47.5, pageWidth - 14, 47.5);
 
-  // Certificate Title
+  // Certificate Header
   doc.setFont("times", "bold");
   doc.setFontSize(10.5);
   const certTitle = isPass
-    ? "STATUTORY VERIFICATION CERTIFICATE OF COMPLIANCE"
-    : "INSPECTION MEMORANDUM & NOTICE OF STATUTORY DEFICIENCY";
-  doc.text(certTitle, pageWidth / 2, 39.5, { align: "center" });
+    ? "CERTIFICATE OF STATUTORY VERIFICATION & COMPLIANCE"
+    : "MEMORANDUM OF STATUTORY NON-COMPLIANCE & INSPECTION NOTICE";
+  doc.text(certTitle, pageWidth / 2, 53, { align: "center" });
 
-  // Metadata Panel
-  doc.setFontSize(8);
+  // Metadata Panel Box
+  doc.setLineWidth(0.25);
+  doc.setDrawColor(120, 120, 120);
+  doc.setFillColor(252, 252, 252);
+  doc.roundedRect(14, 56, pageWidth - 28, 20, 1, 1, "FD");
+
+  doc.setFontSize(7.8);
   doc.setFont("times", "bold");
-  doc.text("INSPECTION DOSSIER REF:", 14, 46);
+  doc.text("DOSSIER REF ID:", 17, 61.5);
   doc.setFont("times", "normal");
-  doc.text(String(inspection?.id || "N/A"), 56, 46);
+  doc.text(String(inspection?.id || "N/A"), 48, 61.5);
 
   doc.setFont("times", "bold");
-  doc.text("COMMODITY / BRAND:", 14, 51);
+  doc.text("COMMODITY / BRAND:", 17, 67);
   doc.setFont("times", "normal");
   const prodName =
     extraction?.product_name?.value ||
     inspection?.product_name ||
     "Unnamed Commodity";
-  doc.text(String(prodName).slice(0, 45), 56, 51);
+  doc.text(String(prodName).slice(0, 42), 48, 67);
 
   doc.setFont("times", "bold");
-  doc.text("INSPECTED PREMISES / ID:", 14, 56);
+  doc.text("INSPECTING OFFICER ID:", 17, 72.5);
   doc.setFont("times", "normal");
   doc.text(
     inspection?.officer_id
       ? `OFFICER-UNIT-${inspection.officer_id.slice(0, 8).toUpperCase()}`
-      : "FIELD-UNIT-ENF-01",
-    56,
-    56
+      : "FIELD-ENF-UNIT-01",
+    48,
+    72.5
   );
 
   doc.setFont("times", "bold");
-  doc.text("AUDIT TIMESTAMP:", 120, 46);
+  doc.text("INSPECTION DATE:", 118, 61.5);
   doc.setFont("times", "normal");
   doc.text(
     inspection?.created_at
       ? new Date(inspection.created_at).toLocaleString()
       : new Date().toLocaleString(),
-    152,
-    46
+    148,
+    61.5
   );
 
   doc.setFont("times", "bold");
-  doc.text("LEGAL STATUS:", 120, 51);
+  doc.text("STATUTORY STATUS:", 118, 67);
   doc.setFont("times", "bold");
   if (isPass) {
     doc.setTextColor(16, 120, 60);
-    doc.text("COMPLIANT (PASSED)", 152, 51);
+    doc.text("COMPLIANT (PASSED)", 148, 67);
   } else {
     doc.setTextColor(180, 20, 20);
-    doc.text("NON-COMPLIANT", 152, 51);
-    doc.setFontSize(7);
-    doc.text("[BREACH OF RULE 6 DETECTED]", 152, 55);
+    doc.text("NON-COMPLIANT", 148, 67);
+    doc.setFontSize(6.8);
+    doc.text("[BREACH OF RULE 6 DETECTED]", 148, 71.5);
   }
   doc.setTextColor(20, 20, 20);
 
-  // Section 1: Verification of Mandatory Declarations
-  let currentY = 62;
+  // Section I: Verification of Mandatory Declarations
+  let currentY = 82;
   doc.setFont("times", "bold");
-  doc.setFontSize(9);
+  doc.setFontSize(8.8);
   doc.text(
-    "I. VERIFICATION OF MANDATORY DECLARATIONS [UNDER RULE 6, PCR 2011]",
+    "I. VERIFICATION OF MANDATORY DECLARATIONS [RULE 6, PCR 2011]",
     14,
     currentY
   );
@@ -201,31 +244,48 @@ export async function generateComplianceReport({
           const label =
             fieldLabels[key] || key.replace(/_/g, " ").toUpperCase();
 
-          const val =
+          const finalVal =
             typeof field === "object" && field !== null && "value" in field
               ? field.value
               : typeof field === "object"
               ? JSON.stringify(field)
               : String(field ?? "—");
 
-          const isMissing =
-            !val ||
-            val === "—" ||
-            val === "null" ||
-            String(val).toUpperCase() === "NOT DECLARED";
+          const rawVal =
+            typeof field === "object" && field !== null && "raw_value" in field
+              ? field.raw_value
+              : null;
 
-          let statusText = "Declared";
+          const isEdited = Boolean(
+            typeof field === "object" && field !== null && field.is_edited
+          );
+
+          const isMissing =
+            !finalVal ||
+            finalVal === "—" ||
+            finalVal === "null" ||
+            String(finalVal).toUpperCase() === "NOT DECLARED";
+
+          // Single Consolidated Value Cell: mentions officer corrections in brackets
+          let valueText = isMissing ? "NOT DECLARED" : String(finalVal);
+          if (isEdited && rawVal && String(rawVal) !== String(finalVal)) {
+            valueText = `${finalVal}  [Officer Verified; AI Detected: ${rawVal}]`;
+          } else if (isEdited) {
+            valueText = `${finalVal}  [Officer Verified]`;
+          }
+
+          let findingText = "Declared";
           if (isMissing) {
-            statusText = "Missing";
+            findingText = "Missing";
           } else if (
             typeof field === "object" &&
             field?.status &&
             String(field.status).toUpperCase().includes("FAIL")
           ) {
-            statusText = "Non-Standard";
+            findingText = "Non-Standard";
           }
 
-          return [label, isMissing ? "NOT DECLARED" : val, statusText];
+          return [label, valueText, findingText];
         })
     : [];
 
@@ -234,7 +294,7 @@ export async function generateComplianceReport({
     head: [
       [
         "Statutory Declaration Parameter",
-        "Detected Value on Commodity Label",
+        "Declared Value on Packaging Label",
         "Verification Finding",
       ],
     ],
@@ -247,9 +307,9 @@ export async function generateComplianceReport({
       textColor: [10, 10, 10],
       font: "times",
       fontStyle: "bold",
-      fontSize: 8,
+      fontSize: 7.6,
       lineWidth: 0.2,
-      lineColor: [100, 100, 100],
+      lineColor: [90, 90, 90],
     },
     bodyStyles: {
       font: "times",
@@ -259,9 +319,9 @@ export async function generateComplianceReport({
       lineColor: [180, 180, 180],
     },
     columnStyles: {
-      0: { cellWidth: 55, fontStyle: "bold" },
-      1: { cellWidth: 100 },
-      2: { cellWidth: 27, halign: "center" },
+      0: { cellWidth: 50, fontStyle: "bold" },
+      1: { cellWidth: 104 },
+      2: { cellWidth: 28, halign: "center" },
     },
     didParseCell: (data) => {
       if (data.section === "body" && data.column.index === 2) {
@@ -270,6 +330,7 @@ export async function generateComplianceReport({
           data.cell.styles.fontStyle = "bold";
         } else if (data.cell.raw === "Declared") {
           data.cell.styles.textColor = [16, 120, 40];
+          data.cell.styles.fontStyle = "bold";
         }
       }
     },
@@ -277,17 +338,17 @@ export async function generateComplianceReport({
     margin: { left: 14, right: 14 },
   });
 
-  // Section 2: Statutory Compliance Determination & Rule Findings
+  // Section II: Statutory Compliance Determination & Overrides
   currentY = (doc.lastAutoTable?.finalY ?? currentY) + 7;
 
-  if (currentY > 225) {
+  if (currentY > 218) {
     doc.addPage();
     drawPageBorders(doc);
     currentY = 16;
   }
 
   doc.setFont("times", "bold");
-  doc.setFontSize(9);
+  doc.setFontSize(8.8);
   doc.text(
     "II. STATUTORY COMPLIANCE DETERMINATION & RULE FINDINGS",
     14,
@@ -298,17 +359,48 @@ export async function generateComplianceReport({
     const title =
       categoryLabels[cat.category] ||
       cat.category?.replace(/_/g, " ").toUpperCase();
-    const verdictText = cat.verdict === "PASS" ? "COMPLIANT" : "VIOLATION";
+
+    const isOverridden = Boolean(
+      cat.officer_verdict && cat.officer_verdict !== cat.verdict
+    );
+    const finalVerdictRaw = cat.officer_verdict || cat.verdict;
+
+    // Single Finding Cell: mentions officer override in brackets
+    let findingText =
+      finalVerdictRaw === "PASS"
+        ? "COMPLIANT"
+        : finalVerdictRaw === "ISSUE"
+        ? "VIOLATION"
+        : "REVIEW REQ.";
+
+    if (isOverridden) {
+      findingText += ` [Overridden; AI: ${
+        cat.verdict === "PASS" ? "COMPLIANT" : cat.verdict
+      }]`;
+    }
+
     const ref = cat.rule_reference
       ? `\n[Statutory Provision: ${cat.rule_reference}]`
       : "";
-    const reason = `${cat.reasoning || "—"}${ref}`;
-    return [title, verdictText, reason];
+
+    const remarksBlock = cat.officer_remarks
+      ? `\n[Officer Remarks: ${cat.officer_remarks}]`
+      : "";
+
+    const fullReasoning = `${cat.reasoning || "—"}${ref}${remarksBlock}`;
+
+    return [title, findingText, fullReasoning];
   });
 
   autoTable(doc, {
     startY: currentY + 3,
-    head: [["Rule Area", "Finding", "Statutory Observation & Legal Provision"]],
+    head: [
+      [
+        "Rule Category",
+        "Statutory Finding",
+        "Legal Observation & Statutory Provisions",
+      ],
+    ],
     body:
       checklistRows.length > 0
         ? checklistRows
@@ -318,9 +410,9 @@ export async function generateComplianceReport({
       textColor: [10, 10, 10],
       font: "times",
       fontStyle: "bold",
-      fontSize: 8,
+      fontSize: 7.6,
       lineWidth: 0.2,
-      lineColor: [100, 100, 100],
+      lineColor: [90, 90, 90],
     },
     bodyStyles: {
       font: "times",
@@ -331,16 +423,20 @@ export async function generateComplianceReport({
     },
     columnStyles: {
       0: { cellWidth: 42, fontStyle: "bold" },
-      1: { cellWidth: 26, halign: "center" },
-      2: { cellWidth: 114 },
+      1: { cellWidth: 38, halign: "center" },
+      2: { cellWidth: 102 },
     },
     didParseCell: (data) => {
       if (data.section === "body" && data.column.index === 1) {
-        if (data.cell.raw === "VIOLATION") {
+        const textVal = String(data.cell.raw);
+        if (textVal.includes("VIOLATION")) {
           data.cell.styles.textColor = [190, 20, 20];
           data.cell.styles.fontStyle = "bold";
-        } else if (data.cell.raw === "COMPLIANT") {
+        } else if (textVal.includes("COMPLIANT")) {
           data.cell.styles.textColor = [16, 120, 40];
+          data.cell.styles.fontStyle = "bold";
+        } else if (textVal.includes("REVIEW REQ.")) {
+          data.cell.styles.textColor = [180, 100, 10];
           data.cell.styles.fontStyle = "bold";
         }
       }
@@ -349,7 +445,7 @@ export async function generateComplianceReport({
     margin: { left: 14, right: 14 },
   });
 
-  // Section 3: Inspected Commodity Packaging Specimens (Dedicated Page)
+  // Section III: Inspected Commodity Packaging Specimens (Dedicated Page)
   const images = inspection?.images || [];
   if (images.length > 0) {
     doc.addPage();
@@ -374,7 +470,9 @@ export async function generateComplianceReport({
       const imgObj = images[i];
       let base64Data: string | null = null;
 
-      const domImg = document.getElementById(`inspection-img-${i}`) as HTMLImageElement;
+      const domImg = document.getElementById(
+        `inspection-img-${i}`
+      ) as HTMLImageElement;
       if (domImg && domImg.complete && domImg.naturalWidth > 0) {
         base64Data = getBase64FromDomImage(domImg);
       }
@@ -401,7 +499,14 @@ export async function generateComplianceReport({
         doc.rect(startX, currentY, imgWidth, imgHeight);
 
         try {
-          doc.addImage(base64Data, "JPEG", startX, currentY, imgWidth, imgHeight);
+          doc.addImage(
+            base64Data,
+            "JPEG",
+            startX,
+            currentY,
+            imgWidth,
+            imgHeight
+          );
         } catch (addErr) {
           console.warn("jsPDF addImage failed:", addErr);
         }
@@ -425,7 +530,7 @@ export async function generateComplianceReport({
     currentY += imgHeight + 14;
   }
 
-  // Section 4: Notice Under Section 36 & Signature Block
+  // Section IV: Statutory Warning & Signature Box
   if (currentY > 215) {
     doc.addPage();
     drawPageBorders(doc);
@@ -433,10 +538,10 @@ export async function generateComplianceReport({
   }
 
   doc.setFont("times", "italic");
-  doc.setFontSize(7);
+  doc.setFontSize(6.8);
   doc.setTextColor(40, 40, 40);
   const legalNotice =
-    "NOTICE UNDER SECTION 36, LEGAL METROLOGY ACT, 2009: Whoever manufactures, packs, imports, sells, distributes, or exposes for sale any pre-packaged commodity which does not conform to the declarations on the package as stipulated by the Legal Metrology (Packaged Commodities) Rules, 2011 shall be punishable with fine which may extend to twenty-five thousand rupees, for the second offence to fifty thousand rupees, and for subsequent offence with fine up to one lakh rupees or imprisonment. This certificate is a verified technical inspection record generated via the SIH automated verification platform.";
+    "NOTICE UNDER SECTION 36, LEGAL METROLOGY ACT, 2009: Whoever manufactures, packs, imports, sells, distributes, or exposes for sale any pre-packaged commodity which does not conform to the declarations on the package as stipulated by the Legal Metrology (Packaged Commodities) Rules, 2011 shall be punishable with fine which may extend to twenty-five thousand rupees, for the second offence to fifty thousand rupees, and for subsequent offence with fine up to one lakh rupees or imprisonment. This document constitutes an official statutory verification record.";
   doc.text(doc.splitTextToSize(legalNotice, pageWidth - 28), 14, currentY);
 
   const signY = currentY + 22;
@@ -455,7 +560,7 @@ export async function generateComplianceReport({
   doc.setFont("times", "bold");
   doc.text("Controller of Legal Metrology", pageWidth - 70, signY + 8);
 
-  // Running Footers
+  // Running Official Footers
   const totalPages = (doc as any).internal.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
