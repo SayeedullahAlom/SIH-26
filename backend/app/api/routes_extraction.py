@@ -1,14 +1,18 @@
+import copy
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.auth.deps import get_current_user
 from app.db.session import get_db
 from app.models.inspection import Inspection
-from app.models.inspection_image import InspectionImage
 from app.models.inspection_extraction import InspectionExtraction
+from app.models.inspection_image import InspectionImage
 from app.models.user import User
 from app.services.extraction_service import extract_from_images
 from app.services.storage_service import get_object_bytes
@@ -18,6 +22,12 @@ router = APIRouter(
     prefix="/inspections",
     tags=["extraction"],
 )
+
+
+class ExtractionFieldPatch(BaseModel):
+    field_name: str
+    edited_value: str
+    status: str = "visible"
 
 
 def get_object_key(s3_url: str) -> str:
@@ -133,4 +143,77 @@ async def extract_inspection(
         "inspection_id": inspection.id,
         "extraction_id": extraction.id,
         "extraction": extraction_result.model_dump(mode="json"),
+    }
+
+
+@router.patch("/{inspection_id}/extraction")
+def update_extracted_declaration(
+    inspection_id: uuid.UUID,
+    payload: ExtractionFieldPatch,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Allows the officer to manually correct a declaration field before compliance checks.
+    Preserves raw Vision AI values while updating the active value and audit flags.
+    """
+    inspection = db.scalar(
+        select(Inspection).where(Inspection.id == inspection_id)
+    )
+    if inspection is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Inspection not found",
+        )
+
+    if inspection.officer_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this inspection",
+        )
+
+    latest = (
+        db.query(InspectionExtraction)
+        .filter(InspectionExtraction.inspection_id == inspection_id)
+        .order_by(InspectionExtraction.created_at.desc())
+        .first()
+    )
+
+    if not latest:
+        raise HTTPException(
+            status_code=404,
+            detail="No extraction found to update for this inspection",
+        )
+
+    # Deep copy to decouple references
+    data: dict[str, Any] = copy.deepcopy(latest.extraction_data or {})
+    current_field = data.get(payload.field_name, {})
+
+    if not isinstance(current_field, dict):
+        current_field = {"value": current_field}
+
+    # Retain the initial vision value if not already recorded
+    if "raw_value" not in current_field:
+        current_field["raw_value"] = current_field.get("value")
+
+    # Update to the officer's edited values
+    current_field["value"] = payload.edited_value
+    current_field["edited_value"] = payload.edited_value
+    current_field["status"] = payload.status
+    current_field["is_edited"] = True
+
+    data[payload.field_name] = current_field
+    latest.extraction_data = data
+
+    # Instruct SQLAlchemy to mark the JSON column dirty
+    flag_modified(latest, "extraction_data")
+
+    db.commit()
+    db.refresh(latest)
+
+    return {
+        "status": "success",
+        "inspection_id": inspection_id,
+        "field_name": payload.field_name,
+        "extraction": latest.extraction_data,
     }

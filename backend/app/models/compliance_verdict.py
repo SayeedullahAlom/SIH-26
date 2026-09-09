@@ -1,9 +1,8 @@
 import uuid
-from sqlalchemy import ForeignKey, Text, DateTime, func
+from sqlalchemy import ForeignKey, Text, DateTime, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
-from sqlalchemy import Column, text
 
 
 class ComplianceVerdict(Base):
@@ -17,11 +16,15 @@ class ComplianceVerdict(Base):
     )
 
     category: Mapped[str] = mapped_column(Text, nullable=False)
-    verdict: Mapped[str] = mapped_column(Text, nullable=False)  # PASS | ISSUE | REVIEW_REQUIRED
+    verdict: Mapped[str] = mapped_column(Text, nullable=False)  # Engine verdict: PASS | ISSUE | REVIEW_REQUIRED
     reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence_field: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     rule_reference: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Officer Override Audit Trail
+    officer_verdict: Mapped[str | None] = mapped_column(Text, nullable=True)
+    officer_remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped["DateTime"] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

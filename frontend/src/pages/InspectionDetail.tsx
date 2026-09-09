@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { FileDown, Sparkles, ShieldCheck, Loader2, Trash2 } from "lucide-react";
+import { FileDown, Sparkles, ShieldCheck, Loader2, Trash2, Edit3, CheckSquare, X } from "lucide-react";
 import { motion } from "framer-motion";
 import { api } from "../lib/api";
 import type { Inspection } from "../types";
@@ -47,44 +47,16 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 const EXTRACTION_STAGES_TEMPLATE: PipelineStage[] = [
-  {
-    label: "Multimodal Pre-Flight Ingestion",
-    status: "pending",
-    technicalDetail: "Generating Cloudflare R2 presigned artifact buffers...",
-  },
-  {
-    label: "Vision AI Multimodal Inference",
-    status: "pending",
-    technicalDetail: "Executing Gemini 3.7 Vision pipeline (spatial token OCR & visual semantics)...",
-  },
-  {
-    label: "AST Normalization & Declaration Parsing",
-    status: "pending",
-    technicalDetail: "Synthesizing unstructured key-values against PCR Rule 6 schema...",
-  },
-  {
-    label: "Relational Persistence & State Commit",
-    status: "pending",
-    technicalDetail: "Purging stale extractions and flushing records to PostgreSQL...",
-  },
+  { label: "Multimodal Pre-Flight Ingestion", status: "pending", technicalDetail: "Generating Cloudflare R2 presigned artifact buffers..." },
+  { label: "Vision AI Multimodal Inference", status: "pending", technicalDetail: "Executing Gemini Vision pipeline (spatial token OCR)..." },
+  { label: "AST Normalization & Declaration Parsing", status: "pending", technicalDetail: "Synthesizing unstructured key-values against PCR Rule 6 schema..." },
+  { label: "Relational Persistence & State Commit", status: "pending", technicalDetail: "Purging stale extractions and flushing records to PostgreSQL..." },
 ];
 
 const COMPLIANCE_STAGES_TEMPLATE: PipelineStage[] = [
-  {
-    label: "Statutory Chunk Indexing",
-    status: "pending",
-    technicalDetail: "Retrieving authoritative PCR 2011 rule references from chunks...",
-  },
-  {
-    label: "Legal Metrology Rules Engine",
-    status: "pending",
-    technicalDetail: "Validating MRP, Net Quantity (SI units), Manufacturer/Packer, & Consumer Care...",
-  },
-  {
-    label: "Verdict Classification & Checkpoint Sync",
-    status: "pending",
-    technicalDetail: "Normalizing overall compliance enum constraints ('COMPLIANT' | 'NON_COMPLIANT')...",
-  },
+  { label: "Statutory Chunk Indexing", status: "pending", technicalDetail: "Retrieving authoritative PCR 2011 rule references from chunks..." },
+  { label: "Legal Metrology Rules Engine", status: "pending", technicalDetail: "Validating final values for MRP, Net Quantity, Packer, etc..." },
+  { label: "Verdict Classification & Checkpoint Sync", status: "pending", technicalDetail: "Normalizing overall compliance enum constraints..." },
 ];
 
 export default function InspectionDetail() {
@@ -101,6 +73,7 @@ export default function InspectionDetail() {
   const [reportGenerating, setReportGenerating] = useState(false);
   const [error, setError] = useState("");
 
+  // Terminal telemetry state
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalTitle, setTerminalTitle] = useState("");
   const [stages, setStages] = useState<PipelineStage[]>([]);
@@ -109,15 +82,25 @@ export default function InspectionDetail() {
   const [errorMessage, setErrorMessage] = useState<string | undefined>();
   const [activeTask, setActiveTask] = useState<"extract" | "verdict" | null>(null);
 
+  // Declaration Edit Modal State
+  const [editField, setEditField] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [editStatus, setEditStatus] = useState("visible");
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  // Verdict Override Modal State
+  const [overrideCategory, setOverrideCategory] = useState<string | null>(null);
+  const [officerVerdictChoice, setOfficerVerdictChoice] = useState("PASS");
+  const [officerRemarks, setOfficerRemarks] = useState("");
+  const [savingVerdictOverride, setSavingVerdictOverride] = useState(false);
+
   const extractAbortRef = useRef<AbortController | null>(null);
   const verdictAbortRef = useRef<AbortController | null>(null);
 
   const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const updateStage = (index: number, status: PipelineStage["status"]) => {
-    setStages((prev) =>
-      prev.map((stage, idx) => (idx === index ? { ...stage, status } : stage))
-    );
+    setStages((prev) => prev.map((s, idx) => (idx === index ? { ...s, status } : s)));
   };
 
   const loadInspection = async () => {
@@ -126,17 +109,20 @@ export default function InspectionDetail() {
       const data = res.data;
       setInspection(data);
 
+      // Parse latest extraction into fresh object
       if (Array.isArray(data.extractions) && data.extractions.length > 0) {
         const latest = data.extractions[data.extractions.length - 1];
-        setExtraction(latest.extraction_data || latest);
+        const rawExtraction = latest.extraction_data || latest;
+        setExtraction({ ...rawExtraction });
       } else if (data.extraction) {
-        setExtraction(data.extraction);
+        setExtraction({ ...data.extraction });
       }
 
+      // Parse verdicts into fresh array
       if (Array.isArray(data.verdicts) && data.verdicts.length > 0) {
-        setCategories(data.verdicts);
+        setCategories([...data.verdicts]);
       } else if (Array.isArray(data.categories)) {
-        setCategories(data.categories);
+        setCategories([...data.categories]);
       }
 
       setOverallStatus(data.overall_result || data.status);
@@ -158,9 +144,7 @@ export default function InspectionDetail() {
   }, [id]);
 
   const runExtraction = async (currentAttempt = 1) => {
-    if (extractAbortRef.current) {
-      extractAbortRef.current.abort();
-    }
+    if (extractAbortRef.current) extractAbortRef.current.abort();
     const controller = new AbortController();
     extractAbortRef.current = controller;
 
@@ -179,11 +163,7 @@ export default function InspectionDetail() {
       updateStage(0, "success");
 
       updateStage(1, "running");
-      const res = await api.post(
-        `/inspections/${id}/extract`,
-        {},
-        { signal: controller.signal }
-      );
+      const res = await api.post(`/inspections/${id}/extract`, {}, { signal: controller.signal });
       updateStage(1, "success");
 
       updateStage(2, "running");
@@ -192,7 +172,7 @@ export default function InspectionDetail() {
 
       updateStage(3, "running");
       const payload = res.data.extraction || res.data.extraction_data || res.data;
-      setExtraction(payload);
+      setExtraction({ ...payload });
       await loadInspection();
       await delay(400);
       updateStage(3, "success");
@@ -204,7 +184,6 @@ export default function InspectionDetail() {
         setTerminalOpen(false);
         return;
       }
-      console.error("Extraction pipeline error:", err);
       const activeIdx = stages.findIndex((s) => s.status === "running");
       if (activeIdx !== -1) updateStage(activeIdx, "error");
 
@@ -213,9 +192,7 @@ export default function InspectionDetail() {
         runExtraction(currentAttempt + 1);
       } else {
         setIsFailed(true);
-        setErrorMessage(
-          err.response?.data?.detail || err.message || "Vision AI model inference error"
-        );
+        setErrorMessage(err.response?.data?.detail || err.message || "Vision AI model inference error");
       }
     } finally {
       extractAbortRef.current = null;
@@ -223,9 +200,7 @@ export default function InspectionDetail() {
   };
 
   const runVerdict = async (currentAttempt = 1) => {
-    if (verdictAbortRef.current) {
-      verdictAbortRef.current.abort();
-    }
+    if (verdictAbortRef.current) verdictAbortRef.current.abort();
     const controller = new AbortController();
     verdictAbortRef.current = controller;
 
@@ -244,18 +219,14 @@ export default function InspectionDetail() {
       updateStage(0, "success");
 
       updateStage(1, "running");
-      const res = await api.post(
-        `/inspections/${id}/verdict`,
-        {},
-        { signal: controller.signal }
-      );
+      const res = await api.post(`/inspections/${id}/verdict`, {}, { signal: controller.signal });
       updateStage(1, "success");
 
       updateStage(2, "running");
       if (Array.isArray(res.data.categories)) {
-        setCategories(res.data.categories);
+        setCategories([...res.data.categories]);
       } else if (Array.isArray(res.data.verdicts)) {
-        setCategories(res.data.verdicts);
+        setCategories([...res.data.verdicts]);
       }
       if (res.data.overall_status) {
         setOverallStatus(res.data.overall_status);
@@ -271,7 +242,6 @@ export default function InspectionDetail() {
         setTerminalOpen(false);
         return;
       }
-      console.error("Compliance engine failure:", err);
       const activeIdx = stages.findIndex((s) => s.status === "running");
       if (activeIdx !== -1) updateStage(activeIdx, "error");
 
@@ -280,50 +250,99 @@ export default function InspectionDetail() {
         runVerdict(currentAttempt + 1);
       } else {
         setIsFailed(true);
-        setErrorMessage(
-          err.response?.data?.detail || err.message || "Statutory audit evaluation fault"
-        );
+        setErrorMessage(err.response?.data?.detail || err.message || "Statutory audit evaluation fault");
       }
     } finally {
       verdictAbortRef.current = null;
     }
   };
 
+  const handleSaveFieldEdit = async () => {
+    if (!editField) return;
+    setSavingEdit(true);
+    try {
+      const res = await api.patch(`/inspections/${id}/extraction`, {
+        field_name: editField,
+        edited_value: editValue,
+        status: editStatus,
+      });
+
+      // Update state directly from payload
+      if (res.data?.extraction) {
+        setExtraction({ ...res.data.extraction });
+      }
+
+      setEditField(null);
+      await loadInspection();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Could not save declaration edit");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleSaveVerdictOverride = async () => {
+    if (!overrideCategory) return;
+    if (!officerRemarks.trim()) {
+      alert("Please provide an auditor justification / remark for this verdict override.");
+      return;
+    }
+    setSavingVerdictOverride(true);
+    try {
+      const res = await api.patch(`/inspections/${id}/verdicts/override`, {
+        category: overrideCategory,
+        officer_verdict: officerVerdictChoice,
+        officer_remarks: officerRemarks,
+      });
+
+      // Update categories state directly
+      setCategories((prev) =>
+        prev.map((cat) =>
+          cat.category === overrideCategory
+            ? {
+                ...cat,
+                officer_verdict: officerVerdictChoice,
+                officer_remarks: officerRemarks,
+              }
+            : cat
+        )
+      );
+
+      if (res.data?.overall_status) {
+        setOverallStatus(res.data.overall_status);
+      }
+
+      setOverrideCategory(null);
+      await loadInspection();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Failed to save override verdict");
+    } finally {
+      setSavingVerdictOverride(false);
+    }
+  };
+
   const handleCancelPipeline = () => {
-    if (extractAbortRef.current) {
-      extractAbortRef.current.abort();
-      extractAbortRef.current = null;
-    }
-    if (verdictAbortRef.current) {
-      verdictAbortRef.current.abort();
-      verdictAbortRef.current = null;
-    }
+    if (extractAbortRef.current) extractAbortRef.current.abort();
+    if (verdictAbortRef.current) verdictAbortRef.current.abort();
     setActiveTask(null);
     setIsFailed(false);
     setTerminalOpen(false);
   };
 
   const handleDeleteInspection = async () => {
-    if (!id) return;
-    const confirmed = window.confirm(
-      "Are you sure you want to permanently delete this inspection and all of its records?"
-    );
-    if (!confirmed) return;
-
+    if (!id || !window.confirm("Permanently delete this audit?")) return;
     setDeleting(true);
     try {
       await api.delete(`/inspections/${id}`);
       navigate("/inspections");
     } catch (err: any) {
-      console.error("Failed to delete inspection:", err);
-      setError(err.response?.data?.detail || "Failed to delete inspection. Please try again.");
+      setError(err.response?.data?.detail || "Failed to delete inspection.");
       setDeleting(false);
     }
   };
 
   const handleDownloadReport = async () => {
     setReportGenerating(true);
-    setError("");
     try {
       await generateComplianceReport({
         inspection,
@@ -334,8 +353,8 @@ export default function InspectionDetail() {
         categoryLabels: CATEGORY_LABELS,
       });
     } catch (err) {
-      console.error("Failed to generate PDF:", err);
-      setError("Could not generate report certificate. Please check console logs.");
+      console.error("Report PDF generation error:", err);
+      setError("Failed to generate PDF.");
     } finally {
       setReportGenerating(false);
     }
@@ -375,7 +394,6 @@ export default function InspectionDetail() {
               variant="primary"
               onClick={handleDownloadReport}
               disabled={!extraction || reportGenerating}
-              title={!extraction ? "Extract declarations first to generate a report" : "Export official audit certificate"}
             >
               {reportGenerating ? (
                 <>
@@ -392,14 +410,9 @@ export default function InspectionDetail() {
               type="button"
               onClick={handleDeleteInspection}
               disabled={deleting}
-              title="Delete this inspection"
               className="p-2.5 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 transition disabled:opacity-50 flex items-center justify-center cursor-pointer"
             >
-              {deleting ? (
-                <Loader2 size={16} className="animate-spin text-rose-600" />
-              ) : (
-                <Trash2 size={16} />
-              )}
+              {deleting ? <Loader2 size={16} className="animate-spin text-rose-600" /> : <Trash2 size={16} />}
             </button>
           </div>
         </div>
@@ -410,6 +423,7 @@ export default function InspectionDetail() {
           </p>
         )}
 
+        {/* Product Images */}
         {inspection.images && inspection.images.length > 0 && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {inspection.images.map((img: any, idx: number) => (
@@ -429,6 +443,7 @@ export default function InspectionDetail() {
           </div>
         )}
 
+        {/* Declarations Table with Original + Edited Display */}
         <Card className="p-6 md:p-8">
           <div className="flex justify-between items-center mb-6 pb-4 border-b border-zinc-100">
             <h2 className="text-lg md:text-xl flex items-center gap-2 text-[#0A1329]">
@@ -448,27 +463,53 @@ export default function InspectionDetail() {
               {Object.entries(extraction)
                 .filter(([key]) => !["id", "inspection_id", "extraction_id", "created_at", "updated_at"].includes(key))
                 .map(([key, field]) => {
-                  const displayVal =
-                    typeof field === "object" && field !== null && "value" in field
-                      ? field.value
-                      : typeof field === "object"
-                      ? JSON.stringify(field)
-                      : String(field ?? "—");
-
-                  const statusVal =
-                    typeof field === "object" && field !== null && "status" in field
-                      ? field.status
-                      : null;
+                  const isDict = typeof field === "object" && field !== null;
+                  const finalVal = isDict && "value" in field ? field.value : String(field ?? "—");
+                  const rawVal = isDict && "raw_value" in field ? field.raw_value : finalVal;
+                  const isEdited = isDict && Boolean(field.is_edited);
+                  const statusVal = isDict && "status" in field ? field.status : null;
 
                   return (
-                    <div key={key} className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4 py-3 text-sm items-center">
-                      <span className="text-zinc-500 font-medium">{FIELD_LABELS[key] || key.replace(/_/g, " ")}</span>
-                      <span className="font-semibold text-[#0A1329] break-words">
-                        {displayVal !== null && displayVal !== "" ? displayVal : "—"}
+                    <div key={key} className="grid grid-cols-1 sm:grid-cols-4 gap-2 sm:gap-4 py-3 text-sm items-center">
+                      <span className="text-zinc-500 font-medium">
+                        {FIELD_LABELS[key] || key.replace(/_/g, " ")}
                       </span>
-                      <span className="sm:text-right">
+
+                      <div className="flex flex-col sm:col-span-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-[#0A1329] break-words">
+                            {finalVal !== null && finalVal !== "" ? finalVal : "—"}
+                          </span>
+                          {isEdited && (
+                            <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-[#1D3587] px-2 py-0.5 rounded-md border border-blue-200">
+                              Officer Edited
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Always display original Vision AI data if edited */}
+                        {isEdited && (
+                          <span className="text-xs text-zinc-400 font-mono mt-0.5">
+                            Vision AI Original: <span className="text-zinc-600">{rawVal || "not detected"}</span>
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between sm:justify-end gap-2">
                         {statusVal && <Badge value={statusVal} />}
-                      </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditField(key);
+                            setEditValue(finalVal !== "—" ? finalVal : "");
+                            setEditStatus(statusVal || "visible");
+                          }}
+                          className="p-1.5 rounded-lg text-[#1D3587] hover:bg-slate-100 transition cursor-pointer"
+                          title="Edit declaration"
+                        >
+                          <Edit3 size={15} />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -476,6 +517,7 @@ export default function InspectionDetail() {
           )}
         </Card>
 
+        {/* Compliance Checklist with Officer Overrides */}
         <Card className="p-6 md:p-8">
           <div className="flex justify-between items-center mb-6 pb-4 border-b border-zinc-100">
             <h2 className="text-lg md:text-xl flex items-center gap-2 text-[#0A1329]">
@@ -488,37 +530,171 @@ export default function InspectionDetail() {
             )}
           </div>
 
-          {!extraction ? (
-            <p className="text-sm text-zinc-500 py-4">
-              Run extraction first before conducting the compliance assessment.
-            </p>
-          ) : categories.length === 0 ? (
-            <p className="text-sm text-zinc-500 py-4">
-              Compliance check pending. Click "Run Compliance Check" to evaluate regulations.
-            </p>
+          {categories.length === 0 ? (
+            <p className="text-sm text-zinc-500 py-4">Click "Run Compliance Check" to evaluate regulations.</p>
           ) : (
             <div className="flex flex-col gap-3">
-              {categories.map((cat: any, idx: number) => (
-                <div key={cat.id || cat.category || idx} className="rounded-2xl bg-zinc-50/70 border border-zinc-200/80 p-5">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="font-bold text-sm uppercase tracking-wider text-[#0A1329]">
-                      {CATEGORY_LABELS[cat.category] || cat.category.replace(/_/g, " ")}
-                    </span>
-                    <Badge value={cat.verdict} />
+              {categories.map((cat: any, idx: number) => {
+                const effectiveVerdict = cat.officer_verdict || cat.verdict;
+                return (
+                  <div key={cat.id || cat.category || idx} className="rounded-2xl bg-zinc-50/70 border border-zinc-200/80 p-5">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="font-bold text-sm uppercase tracking-wider text-[#0A1329]">
+                        {CATEGORY_LABELS[cat.category] || cat.category.replace(/_/g, " ")}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {cat.officer_verdict && (
+                          <span className="text-[10px] font-bold uppercase text-zinc-400">
+                            (AI: {cat.verdict})
+                          </span>
+                        )}
+                        <Badge value={effectiveVerdict} />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOverrideCategory(cat.category);
+                            setOfficerVerdictChoice(effectiveVerdict);
+                            setOfficerRemarks(cat.officer_remarks || "");
+                          }}
+                          className="p-1.5 rounded-lg text-[#1D3587] hover:bg-zinc-200 transition cursor-pointer"
+                          title="Override verdict"
+                        >
+                          <CheckSquare size={15} />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-sm text-zinc-600 leading-relaxed">{cat.reasoning}</p>
+                    {cat.officer_remarks && (
+                      <div className="mt-2.5 p-2.5 rounded-xl bg-amber-50/80 border border-amber-200 text-xs text-amber-900">
+                        <span className="font-bold uppercase tracking-wider text-[10px]">Officer Remarks: </span>
+                        {cat.officer_remarks}
+                      </div>
+                    )}
+                    {cat.rule_reference && (
+                      <p className="text-xs font-medium text-zinc-400 mt-3 tracking-wider">
+                        <span className="uppercase font-bold text-zinc-500">Rule Ref:</span> {cat.rule_reference}
+                      </p>
+                    )}
                   </div>
-                  <p className="text-sm text-zinc-600 leading-relaxed">{cat.reasoning}</p>
-                  {cat.rule_reference && (
-                    <p className="text-xs font-medium text-zinc-400 mt-3 tracking-wider">
-                      <span className="uppercase font-bold text-zinc-500">Rule Ref:</span> {cat.rule_reference}
-                    </p>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </Card>
       </motion.div>
 
+      {/* Edit Declaration Modal Dialog */}
+      {editField && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="w-full max-w-md bg-white rounded-2xl p-6 shadow-2xl flex flex-col gap-4 border border-zinc-200">
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold text-sm uppercase text-[#0A1329]">
+                Edit {FIELD_LABELS[editField] || editField}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditField(null)}
+                className="text-zinc-400 hover:text-black cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Corrected Value:</label>
+              <input
+                type="text"
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                className="w-full p-2.5 text-sm border border-zinc-300 rounded-xl focus:outline-hidden focus:border-[#1D3587]"
+                placeholder="Enter corrected text..."
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-semibold text-zinc-600">Visibility Status:</label>
+              <select
+                value={editStatus}
+                onChange={(e) => setEditStatus(e.target.value)}
+                className="text-xs p-2 border border-zinc-200 rounded-lg bg-zinc-50 cursor-pointer"
+              >
+                <option value="visible">Visible</option>
+                <option value="not_visible">Not Visible</option>
+                <option value="illegible">Illegible</option>
+              </select>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => setEditField(null)}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={handleSaveFieldEdit} disabled={savingEdit}>
+                {savingEdit ? "Saving..." : "Save Change"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Override Verdict Modal Dialog */}
+      {overrideCategory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="w-full max-w-md bg-white rounded-2xl p-6 shadow-2xl flex flex-col gap-4 border border-zinc-200">
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold text-sm uppercase text-[#0A1329]">
+                Verdict Override: {CATEGORY_LABELS[overrideCategory] || overrideCategory}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setOverrideCategory(null)}
+                className="text-zinc-400 hover:text-black cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Officer Decision:</label>
+              <div className="flex gap-2">
+                {(["PASS", "ISSUE", "REVIEW_REQUIRED"] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setOfficerVerdictChoice(v)}
+                    className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                      officerVerdictChoice === v
+                        ? "bg-[#1D3587] text-white border-[#1D3587]"
+                        : "bg-zinc-50 text-zinc-600 border-zinc-200 hover:bg-zinc-100"
+                    }`}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Justification / Auditor Remarks:</label>
+              <textarea
+                rows={3}
+                value={officerRemarks}
+                onChange={(e) => setOfficerRemarks(e.target.value)}
+                placeholder="Provide statutory justification for override..."
+                className="w-full p-2.5 text-xs border border-zinc-300 rounded-xl focus:outline-hidden focus:border-[#1D3587]"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => setOverrideCategory(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleSaveVerdictOverride}
+                disabled={savingVerdictOverride}
+              >
+                {savingVerdictOverride ? "Saving..." : "Apply Override"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Technical Telemetry Modal */}
       <ProcessingTerminalModal
         isOpen={terminalOpen}
         title={terminalTitle}

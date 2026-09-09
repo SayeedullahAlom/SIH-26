@@ -1,4 +1,5 @@
 import uuid
+from typing import Optional
 
 from sqlalchemy import CheckConstraint, DateTime, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
@@ -17,6 +18,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False, server_default="officer")
+    avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped["DateTime"] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

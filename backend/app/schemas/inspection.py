@@ -2,13 +2,13 @@ import uuid
 from datetime import datetime
 from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
-from typing import List, Optional
-from pydantic import BaseModel
+
 
 class CategoryVerdictOverride(BaseModel):
     category: str
     status: str
     notes: Optional[str] = None
+
 
 class OfficerOverrideRequest(BaseModel):
     overall_result: str
@@ -45,6 +45,22 @@ class InspectionImageResponse(BaseModel):
     uploaded_at: datetime
 
 
+class ComplianceVerdictResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[uuid.UUID] = None
+    inspection_id: Optional[uuid.UUID] = None
+    category: str
+    verdict: str
+    reasoning: Optional[str] = None
+    evidence_field: Optional[str] = None
+    evidence_value: Optional[str] = None
+    rule_reference: Optional[str] = None
+    officer_verdict: Optional[str] = None
+    officer_remarks: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
 class InspectionCreate(BaseModel):
     product_name: Optional[str] = None
     manufacturer_hint: Optional[str] = None
@@ -64,4 +80,4 @@ class InspectionResponse(BaseModel):
     updated_at: datetime
     images: List[InspectionImageResponse] = []
     extractions: List[Any] = []
-    verdicts: List[Any] = []
+    verdicts: List[ComplianceVerdictResponse] = []
