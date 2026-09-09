@@ -1,236 +1,706 @@
+import os
 import uuid
+
+import psycopg2
+from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
 from app.models.compliance_verdict import ComplianceVerdict
 from app.models.inspection import Inspection
-from app.services.retrieval_service import retrieve_relevant_rules
 
 
-# Queries used to pull statutory rule clauses per category
-CATEGORY_RULE_QUERIES = {
-    "product_identity": "Name and generic or common name of the commodity declaration rules",
-    "manufacturer_details": "Manufacturer, packer, and importer name and address declaration requirements",
-    "country_of_origin": "Country of origin declaration for imported packages",
-    "net_quantity": "Net quantity, standard units of measurement and dimensions declaration",
-    "mrp": "Maximum Retail Price MRP declaration requirements inclusive of all taxes",
-    "unit_sale_price": "Unit sale price USP per gram, per milliliter, per number declaration",
-    "manufacturing_date": "Month and year of manufacture, packing, or import declaration",
-    "expiry_date": "Best before or use by date declaration for commodities subject to decay",
-    "consumer_care": "Consumer care name, address, telephone number, and email address details",
-    "batch_or_lot": "Batch number or lot number identification code on pre-packaged goods",
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+
+# ============================================================
+# PCR 2011 AUTHORITATIVE RULE MAPPING
+# ============================================================
+#
+# These mappings are defined from the team's compliance criteria.
+# RAG is used to store/retrieve the authoritative legal text,
+# but semantic similarity is NOT trusted to choose the legal
+# clause for a compliance verdict.
+#
+# ============================================================
+
+CATEGORY_RULE_REFERENCES = {
+    "mrp": ["Rule 6(1)(e)"],
+    "net_quantity": ["Rule 6(1)(c)"],
+    "manufacturer_details": ["Rule 6(1)(a)"],
+    "country_of_origin": ["Rule 6(1)(a)"],
+    "consumer_care": ["Rule 6(2)"],
 }
 
 
+# ============================================================
+# EXACT RULE LOOKUP
+# ============================================================
+
+def get_rule_by_reference(clause_reference: str) -> dict | None:
+    """
+    Retrieve an authoritative PCR 2011 rule directly from
+    the rules_chunks table using its clause reference.
+
+    This is safer than relying on semantic top-1 retrieval
+    for the legal basis of a compliance verdict.
+    """
+
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is not set")
+
+    conn = psycopg2.connect(DATABASE_URL)
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT
+                id,
+                clause_reference,
+                chapter,
+                title,
+                text
+            FROM rules_chunks
+            WHERE clause_reference = %s
+            LIMIT 1;
+            """,
+            (clause_reference,),
+        )
+
+        row = cur.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "id": str(row[0]),
+            "clause_reference": row[1],
+            "chapter": row[2],
+            "title": row[3],
+            "text": row[4],
+        }
+
+    finally:
+        conn.close()
+
+
+# ============================================================
+# EXTRACTION FIELD HELPER
+# ============================================================
+
 def _field(extraction_data: dict, key: str) -> dict:
-    """Safely pull a field dict {value, confidence, status} from stored extraction JSON."""
-    return extraction_data.get(key) or {"value": None, "confidence": None, "status": "not_visible"}
+    """
+    Safely retrieve an extracted field.
+
+    If the field does not exist, treat it as not visible.
+    """
+
+    return extraction_data.get(key) or {
+        "value": None,
+        "confidence": None,
+        "status": "not_visible",
+    }
 
 
-def evaluate_product_identity(extraction_data: dict) -> dict:
-    prod = _field(extraction_data, "product_name")
-    generic = _field(extraction_data, "generic_name")
-
-    if prod.get("status") == "visible" or generic.get("status") == "visible":
-        return {"verdict": "PASS", "reasoning": "Product identity and generic/common name declared."}
-    if prod.get("status") == "illegible" or generic.get("status") == "illegible":
-        return {"verdict": "REVIEW_REQUIRED", "reasoning": "Product name or generic name is illegible."}
-    return {"verdict": "ISSUE", "reasoning": "Neither product name nor common/generic name is visible."}
-
-
-def evaluate_manufacturer_details(extraction_data: dict) -> dict:
-    name = _field(extraction_data, "manufacturer_name")
-    addr = _field(extraction_data, "manufacturer_address")
-    packer_name = _field(extraction_data, "packer_name")
-    packer_addr = _field(extraction_data, "packer_address")
-    imp_name = _field(extraction_data, "importer_name")
-    imp_addr = _field(extraction_data, "importer_address")
-
-    if (name.get("status") == "visible" and addr.get("status") == "visible") or \
-       (packer_name.get("status") == "visible" and packer_addr.get("status") == "visible") or \
-       (imp_name.get("status") == "visible" and imp_addr.get("status") == "visible"):
-        return {"verdict": "PASS", "reasoning": "Complete name and address of manufacturer, packer, or importer declared."}
-
-    statuses = [
-        name.get("status"),
-        addr.get("status"),
-        packer_name.get("status"),
-        packer_addr.get("status"),
-        imp_name.get("status"),
-        imp_addr.get("status"),
-    ]
-    if "illegible" in statuses:
-        return {"verdict": "REVIEW_REQUIRED", "reasoning": "Manufacturer, packer, or importer detail illegible."}
-    return {"verdict": "ISSUE", "reasoning": "Incomplete manufacturer, packer, and importer name/address details."}
-
-
-def evaluate_country_of_origin(extraction_data: dict) -> dict:
-    importer_name = _field(extraction_data, "importer_name")
-    importer_addr = _field(extraction_data, "importer_address")
-    coo = _field(extraction_data, "country_of_origin")
-
-    if coo.get("status") == "visible" and coo.get("value"):
-        return {"verdict": "PASS", "reasoning": f"Country of origin explicitly declared ({coo.get('value')})."}
-    
-    if importer_name.get("status") == "visible" or importer_addr.get("status") == "visible":
-        if coo.get("status") == "illegible":
-            return {"verdict": "REVIEW_REQUIRED", "reasoning": "Imported commodity detected, but country of origin is illegible."}
-        return {"verdict": "ISSUE", "reasoning": "Imported commodity requires explicit Country of Origin declaration."}
-    
-    return {"verdict": "PASS", "reasoning": "Domestic product without mandatory separate importer origin declaration."}
-
-
-def evaluate_net_quantity(extraction_data: dict) -> dict:
-    qty = _field(extraction_data, "net_quantity")
-    unit = _field(extraction_data, "net_quantity_unit")
-    dims = _field(extraction_data, "dimensions")
-
-    if qty.get("status") == "visible" and unit.get("status") == "visible":
-        dim_info = f" Dimensions: {dims.get('value')}." if dims.get("status") == "visible" else ""
-        return {"verdict": "PASS", "reasoning": f"Net quantity ({qty.get('value')} {unit.get('value')}) properly declared.{dim_info}"}
-    if qty.get("status") == "illegible" or unit.get("status") == "illegible":
-        return {"verdict": "REVIEW_REQUIRED", "reasoning": "Net quantity or unit illegible on package."}
-    return {"verdict": "ISSUE", "reasoning": "Net quantity and standard unit missing from package."}
-
+# ============================================================
+# CATEGORY EVALUATORS
+# ============================================================
 
 def evaluate_mrp(extraction_data: dict) -> dict:
+    """
+    Evaluate MRP declaration.
+
+    PCR basis:
+        Rule 6(1)(e)
+
+    Team-defined criteria:
+        - visible + readable numeric MRP -> PASS
+        - illegible -> REVIEW_REQUIRED
+        - missing -> ISSUE
+    """
+
     mrp = _field(extraction_data, "mrp")
+
     status = mrp.get("status")
     value = mrp.get("value")
 
     if status == "visible":
+
         if value and any(ch.isdigit() for ch in str(value)):
-            return {"verdict": "PASS", "reasoning": f"MRP declared with valid currency/numerical amount: {value}."}
-        return {"verdict": "ISSUE", "reasoning": "MRP field present but lacks readable numeric price."}
+            return {
+                "verdict": "PASS",
+                "reasoning": (
+                    "MRP is visible and contains a numeric value."
+                ),
+                "evidence_field": "mrp",
+                "evidence_value": str(value),
+            }
+
+        return {
+            "verdict": "ISSUE",
+            "reasoning": (
+                "MRP is visible but does not contain "
+                "a readable numeric value."
+            ),
+            "evidence_field": "mrp",
+            "evidence_value": str(value) if value else None,
+        }
+
     if status == "illegible":
-        return {"verdict": "REVIEW_REQUIRED", "reasoning": "MRP text is present but illegible."}
-    return {"verdict": "ISSUE", "reasoning": "Maximum Retail Price (MRP) declaration missing."}
+        return {
+            "verdict": "REVIEW_REQUIRED",
+            "reasoning": (
+                "MRP appears to be present but is illegible."
+            ),
+            "evidence_field": "mrp",
+            "evidence_value": (
+                str(value) if value else None
+            ),
+        }
+
+    return {
+        "verdict": "ISSUE",
+        "reasoning": (
+            "MRP was not detected on the package."
+        ),
+        "evidence_field": "mrp",
+        "evidence_value": None,
+    }
 
 
-def evaluate_unit_sale_price(extraction_data: dict) -> dict:
-    usp = _field(extraction_data, "unit_sale_price")
-    status = usp.get("status")
-    value = usp.get("value")
+def evaluate_net_quantity(extraction_data: dict) -> dict:
+    """
+    Evaluate net quantity declaration.
+
+    PCR basis:
+        Rule 6(1)(c)
+
+    Team-defined criteria:
+        - quantity + unit visible -> PASS
+        - either illegible -> REVIEW_REQUIRED
+        - missing -> ISSUE
+    """
+
+    qty = _field(
+        extraction_data,
+        "net_quantity",
+    )
+
+    unit = _field(
+        extraction_data,
+        "net_quantity_unit",
+    )
+
+    if (
+        qty.get("status") == "visible"
+        and unit.get("status") == "visible"
+    ):
+
+        evidence = (
+            f"{qty.get('value')} "
+            f"{unit.get('value')}"
+        )
+
+        return {
+            "verdict": "PASS",
+            "reasoning": (
+                "Net quantity and unit of measurement "
+                "are visible."
+            ),
+            "evidence_field": "net_quantity",
+            "evidence_value": evidence,
+        }
+
+    if (
+        qty.get("status") == "illegible"
+        or unit.get("status") == "illegible"
+    ):
+
+        return {
+            "verdict": "REVIEW_REQUIRED",
+            "reasoning": (
+                "Net quantity or its unit of measurement "
+                "is illegible."
+            ),
+            "evidence_field": "net_quantity",
+            "evidence_value": (
+                f"{qty.get('value')} "
+                f"{unit.get('value')}"
+            ),
+        }
+
+    return {
+        "verdict": "ISSUE",
+        "reasoning": (
+            "Net quantity or its unit of measurement "
+            "was not detected."
+        ),
+        "evidence_field": "net_quantity",
+        "evidence_value": None,
+    }
+
+
+def evaluate_manufacturer_details(
+    extraction_data: dict,
+) -> dict:
+    """
+    Evaluate manufacturer/packer declaration.
+
+    PCR basis:
+        Rule 6(1)(a)
+
+    Team-defined criteria:
+        - complete manufacturer details -> PASS
+        - complete packer details -> PASS
+        - illegible details -> REVIEW_REQUIRED
+        - neither available -> ISSUE
+    """
+
+    manufacturer_name = _field(
+        extraction_data,
+        "manufacturer_name",
+    )
+
+    manufacturer_address = _field(
+        extraction_data,
+        "manufacturer_address",
+    )
+
+    packer_name = _field(
+        extraction_data,
+        "packer_name",
+    )
+
+    packer_address = _field(
+        extraction_data,
+        "packer_address",
+    )
+
+    manufacturer_complete = (
+        manufacturer_name.get("status") == "visible"
+        and manufacturer_address.get("status") == "visible"
+    )
+
+    packer_complete = (
+        packer_name.get("status") == "visible"
+        and packer_address.get("status") == "visible"
+    )
+
+    # --------------------------------------------------------
+    # Manufacturer details available
+    # --------------------------------------------------------
+
+    if manufacturer_complete:
+
+        evidence = (
+            f"{manufacturer_name.get('value')} - "
+            f"{manufacturer_address.get('value')}"
+        )
+
+        return {
+            "verdict": "PASS",
+            "reasoning": (
+                "Manufacturer name and address "
+                "are visible."
+            ),
+            "evidence_field": "manufacturer_name",
+            "evidence_value": evidence,
+        }
+
+    # --------------------------------------------------------
+    # Packer details available
+    # --------------------------------------------------------
+
+    if packer_complete:
+
+        evidence = (
+            f"{packer_name.get('value')} - "
+            f"{packer_address.get('value')}"
+        )
+
+        return {
+            "verdict": "PASS",
+            "reasoning": (
+                "Packer name and address are visible."
+            ),
+            "evidence_field": "packer_name",
+            "evidence_value": evidence,
+        }
+
+    # --------------------------------------------------------
+    # Some details are illegible
+    # --------------------------------------------------------
+
+    statuses = [
+        manufacturer_name.get("status"),
+        manufacturer_address.get("status"),
+        packer_name.get("status"),
+        packer_address.get("status"),
+    ]
+
+    if "illegible" in statuses:
+
+        return {
+            "verdict": "REVIEW_REQUIRED",
+            "reasoning": (
+                "Manufacturer or packer details "
+                "are partially illegible."
+            ),
+            "evidence_field": "manufacturer_name",
+            "evidence_value": (
+                manufacturer_name.get("value")
+                or packer_name.get("value")
+            ),
+        }
+
+    # --------------------------------------------------------
+    # No complete details detected
+    # --------------------------------------------------------
+
+    return {
+        "verdict": "ISSUE",
+        "reasoning": (
+            "Neither complete manufacturer nor complete "
+            "packer name and address details were detected."
+        ),
+        "evidence_field": "manufacturer_name",
+        "evidence_value": (
+            manufacturer_name.get("value")
+            or packer_name.get("value")
+        ),
+    }
+
+
+def evaluate_country_of_origin(
+    extraction_data: dict,
+) -> dict:
+    """
+    Evaluate imported-package information.
+
+    IMPORTANT:
+    Rule 6(1)(a) explicitly requires the importer name
+    and address for imported packages.
+
+    It does NOT, from the supplied PCR 2011 chunk, establish
+    a standalone country-of-origin declaration requirement.
+
+    Therefore this evaluator does NOT automatically mark a
+    package non-compliant merely because country_of_origin
+    is absent.
+
+    Current Phase 5 behavior:
+        - importer visible + country visible -> PASS
+        - importer visible + country missing -> REVIEW_REQUIRED
+        - importer illegible -> REVIEW_REQUIRED
+        - importer not detected -> REVIEW_REQUIRED
+
+    This keeps the category conservative until a separately
+    sourced legal basis for country-of-origin is established.
+    """
+
+    importer_name = _field(
+        extraction_data,
+        "importer_name",
+    )
+
+    country_of_origin = _field(
+        extraction_data,
+        "country_of_origin",
+    )
+
+    importer_status = importer_name.get("status")
+    coo_status = country_of_origin.get("status")
+
+    # --------------------------------------------------------
+    # Importer is illegible
+    # --------------------------------------------------------
+
+    if importer_status == "illegible":
+
+        return {
+            "verdict": "REVIEW_REQUIRED",
+            "reasoning": (
+                "Importer information is illegible, so "
+                "the imported-package declaration cannot "
+                "be assessed reliably."
+            ),
+            "evidence_field": "importer_name",
+            "evidence_value": importer_name.get("value"),
+        }
+
+    # --------------------------------------------------------
+    # Importer visible
+    # --------------------------------------------------------
+
+    if importer_status == "visible":
+
+        if coo_status == "visible":
+
+            return {
+                "verdict": "PASS",
+                "reasoning": (
+                    "Importer information and the available "
+                    "country-of-origin declaration are visible."
+                ),
+                "evidence_field": "country_of_origin",
+                "evidence_value": (
+                    country_of_origin.get("value")
+                ),
+            }
+
+        if coo_status == "illegible":
+
+            return {
+                "verdict": "REVIEW_REQUIRED",
+                "reasoning": (
+                    "Importer information is visible, but "
+                    "the available country-of-origin information "
+                    "is illegible."
+                ),
+                "evidence_field": "country_of_origin",
+                "evidence_value": (
+                    country_of_origin.get("value")
+                ),
+            }
+
+        return {
+            "verdict": "REVIEW_REQUIRED",
+            "reasoning": (
+                "Importer information is visible, but the "
+                "available extraction does not establish "
+                "whether a country-of-origin declaration is "
+                "present. Manual review is required."
+            ),
+            "evidence_field": "importer_name",
+            "evidence_value": (
+                importer_name.get("value")
+            ),
+        }
+
+    # --------------------------------------------------------
+    # Importer not detected
+    # --------------------------------------------------------
+
+    return {
+        "verdict": "REVIEW_REQUIRED",
+        "reasoning": (
+            "Importer information was not detected, so "
+            "it cannot be reliably determined whether the "
+            "package is an imported package requiring "
+            "importer details."
+        ),
+        "evidence_field": "importer_name",
+        "evidence_value": (
+            importer_name.get("value")
+        ),
+    }
+
+
+def evaluate_consumer_care(
+    extraction_data: dict,
+) -> dict:
+    """
+    Evaluate consumer-care declaration.
+
+    PCR basis:
+        Rule 6(2)
+
+    Current extraction model stores consumer-care information
+    as one combined field, so this is an evidence-presence
+    check rather than a complete statutory field-by-field
+    validation.
+    """
+
+    consumer_care = _field(
+        extraction_data,
+        "consumer_care",
+    )
+
+    status = consumer_care.get("status")
+    value = consumer_care.get("value")
 
     if status == "visible" and value:
-        return {"verdict": "PASS", "reasoning": f"Unit Sale Price (USP) declared: {value}."}
+
+        return {
+            "verdict": "PASS",
+            "reasoning": (
+                "Consumer care details are present and visible."
+            ),
+            "evidence_field": "consumer_care",
+            "evidence_value": str(value),
+        }
+
     if status == "illegible":
-        return {"verdict": "REVIEW_REQUIRED", "reasoning": "Unit sale price present but illegible."}
-    return {"verdict": "REVIEW_REQUIRED", "reasoning": "Unit Sale Price (USP) not visibly declared. Verify if package net quantity is exempt."}
+
+        return {
+            "verdict": "REVIEW_REQUIRED",
+            "reasoning": (
+                "Consumer care details are present "
+                "but illegible."
+            ),
+            "evidence_field": "consumer_care",
+            "evidence_value": (
+                str(value) if value else None
+            ),
+        }
+
+    return {
+        "verdict": "ISSUE",
+        "reasoning": (
+            "Consumer care details were not detected."
+        ),
+        "evidence_field": "consumer_care",
+        "evidence_value": None,
+    }
 
 
-def evaluate_manufacturing_date(extraction_data: dict) -> dict:
-    mfg = _field(extraction_data, "manufacture_date")
-    pack = _field(extraction_data, "packing_date")
-    imp = _field(extraction_data, "import_date")
-
-    for f, label in [(mfg, "Manufacture Date"), (pack, "Packing Date"), (imp, "Import Date")]:
-        if f.get("status") == "visible" and f.get("value"):
-            return {"verdict": "PASS", "reasoning": f"{label} declared: {f.get('value')}."}
-
-    if any(f.get("status") == "illegible" for f in [mfg, pack, imp]):
-        return {"verdict": "REVIEW_REQUIRED", "reasoning": "Manufacturing/Packing date found but illegible."}
-    return {"verdict": "ISSUE", "reasoning": "No date of manufacture, packing, or import visible."}
-
-
-def evaluate_expiry_date(extraction_data: dict) -> dict:
-    expiry = _field(extraction_data, "best_before_or_use_by")
-    status = expiry.get("status")
-    value = expiry.get("value")
-
-    if status == "visible" and value:
-        return {"verdict": "PASS", "reasoning": f"Best before / use by date declared: {value}."}
-    if status == "illegible":
-        return {"verdict": "REVIEW_REQUIRED", "reasoning": "Best before / use by date is illegible."}
-    return {"verdict": "REVIEW_REQUIRED", "reasoning": "Expiry / Best Before date not detected. Confirm commodity perishable status."}
-
-
-def evaluate_consumer_care(extraction_data: dict) -> dict:
-    cc = _field(extraction_data, "consumer_care")
-    status = cc.get("status")
-    value = cc.get("value")
-
-    if status == "visible" and value:
-        return {"verdict": "PASS", "reasoning": "Consumer complaint details declared."}
-    if status == "illegible":
-        return {"verdict": "REVIEW_REQUIRED", "reasoning": "Consumer care details present but illegible."}
-    return {"verdict": "ISSUE", "reasoning": "Mandatory consumer care address, phone, or email is missing."}
-
-
-def evaluate_batch_or_lot(extraction_data: dict) -> dict:
-    batch = _field(extraction_data, "batch_or_lot_number")
-    status = batch.get("status")
-    value = batch.get("value")
-
-    if status == "visible" and value:
-        return {"verdict": "PASS", "reasoning": f"Batch / Lot / Code number declared: {value}."}
-    if status == "illegible":
-        return {"verdict": "REVIEW_REQUIRED", "reasoning": "Batch / Lot number present but illegible."}
-    return {"verdict": "ISSUE", "reasoning": "Batch / Lot / Identification code missing from package."}
-
+# ============================================================
+# CATEGORY EVALUATOR MAP
+# ============================================================
 
 CATEGORY_EVALUATORS = {
-    "product_identity": evaluate_product_identity,
+    "mrp": evaluate_mrp,
+    "net_quantity": evaluate_net_quantity,
     "manufacturer_details": evaluate_manufacturer_details,
     "country_of_origin": evaluate_country_of_origin,
-    "net_quantity": evaluate_net_quantity,
-    "mrp": evaluate_mrp,
-    "unit_sale_price": evaluate_unit_sale_price,
-    "manufacturing_date": evaluate_manufacturing_date,
-    "expiry_date": evaluate_expiry_date,
     "consumer_care": evaluate_consumer_care,
-    "batch_or_lot": evaluate_batch_or_lot,
 }
 
 
-def run_compliance_verdict(db: Session, inspection_id: uuid.UUID) -> list[ComplianceVerdict]:
-    inspection = db.query(Inspection).filter(Inspection.id == inspection_id).first()
+# ============================================================
+# MAIN COMPLIANCE VERDICT ENGINE
+# ============================================================
+
+def run_compliance_verdict(
+    db: Session,
+    inspection_id: uuid.UUID,
+) -> list[ComplianceVerdict]:
+
+    # --------------------------------------------------------
+    # 1. Get inspection
+    # --------------------------------------------------------
+
+    inspection = (
+        db.query(Inspection)
+        .filter(
+            Inspection.id == inspection_id
+        )
+        .first()
+    )
+
     if not inspection:
-        raise ValueError("Inspection not found.")
+        raise ValueError(
+            "Inspection not found."
+        )
+
+    # --------------------------------------------------------
+    # 2. Make sure Phase 4 extraction exists
+    # --------------------------------------------------------
 
     if not inspection.extractions:
-        raise ValueError("No Phase 4 extraction found for this inspection.")
+        raise ValueError(
+            "No Phase 4 extraction found for this inspection."
+        )
 
-    # 1. Purge prior verdicts for this inspection to prevent duplicate rows on re-run
-    db.query(ComplianceVerdict).filter(ComplianceVerdict.inspection_id == inspection_id).delete()
-    db.flush()
+    # --------------------------------------------------------
+    # 3. Use latest extraction
+    # --------------------------------------------------------
 
-    # 2. Use the most recent extraction payload
-    latest_extraction = sorted(inspection.extractions, key=lambda e: e.created_at, reverse=True)[0]
-    extraction_data = latest_extraction.extraction_data
+    latest_extraction = sorted(
+        inspection.extractions,
+        key=lambda e: e.created_at,
+        reverse=True,
+    )[0]
+
+    extraction_data = (
+        latest_extraction.extraction_data
+    )
+
+    # --------------------------------------------------------
+    # 4. Evaluate every compliance category
+    # --------------------------------------------------------
 
     results = []
-    for category, evaluator in CATEGORY_EVALUATORS.items():
-        rule_query = CATEGORY_RULE_QUERIES[category]
-        retrieved_rules = retrieve_relevant_rules(rule_query, top_k=1)
-        rule_text = retrieved_rules[0]["text"] if retrieved_rules else "No matching rule retrieved."
 
-        outcome = evaluator(extraction_data)
+    for category, evaluator in CATEGORY_EVALUATORS.items():
+
+        # ----------------------------------------------------
+        # Get authoritative PCR clause reference
+        # ----------------------------------------------------
+
+        rule_references = (
+            CATEGORY_RULE_REFERENCES.get(category)
+        )
+
+        if not rule_references:
+            raise ValueError(
+                f"No PCR 2011 rule configured for "
+                f"category: {category}"
+            )
+
+        # ----------------------------------------------------
+        # Exact legal rule lookup
+        # ----------------------------------------------------
+
+        rule = None
+
+        for reference in rule_references:
+
+            rule = get_rule_by_reference(
+                reference
+            )
+
+            if rule:
+                break
+
+        if not rule:
+            raise ValueError(
+                f"No PCR 2011 rule found in database "
+                f"for category: {category}"
+            )
+
+        # ----------------------------------------------------
+        # Apply team-defined compliance criteria
+        # ----------------------------------------------------
+
+        outcome = evaluator(
+            extraction_data
+        )
+
+        # ----------------------------------------------------
+        # Store verdict
+        # ----------------------------------------------------
 
         verdict_row = ComplianceVerdict(
             inspection_id=inspection_id,
             category=category,
             verdict=outcome["verdict"],
             reasoning=outcome["reasoning"],
-            rule_reference=rule_text[:500],
+            evidence_field=outcome["evidence_field"],
+            evidence_value=outcome["evidence_value"],
+            rule_reference=rule["clause_reference"],
         )
+
         db.add(verdict_row)
-        results.append(verdict_row)
 
-    # 3. Apply schema constraint values: 'COMPLIANT' | 'NON_COMPLIANT' | 'REVIEW_REQUIRED'
-    has_issue = any(r.verdict == "ISSUE" for r in results)
-    has_review = any(r.verdict == "REVIEW_REQUIRED" for r in results)
+        results.append(
+            verdict_row
+        )
 
-    if has_issue:
-        inspection.overall_result = "NON_COMPLIANT"
-    elif has_review:
-        inspection.overall_result = "REVIEW_REQUIRED"
-    else:
-        inspection.overall_result = "COMPLIANT"
-
-    inspection.status = "completed"
+    # --------------------------------------------------------
+    # 5. Commit all category verdicts
+    # --------------------------------------------------------
 
     db.commit()
-    for r in results:
-        db.refresh(r)
+
+    # --------------------------------------------------------
+    # 6. Refresh generated fields such as id/created_at
+    # --------------------------------------------------------
+
+    for result in results:
+        db.refresh(result)
 
     return results
