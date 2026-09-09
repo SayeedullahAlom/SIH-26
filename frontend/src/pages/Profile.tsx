@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  User as UserIcon,
   Mail,
   ShieldCheck,
   Calendar,
@@ -16,7 +15,6 @@ import {
   KeyRound,
   Edit3,
   Check,
-  X,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { api } from "../lib/api";
@@ -430,14 +428,14 @@ export default function Profile() {
             </h3>
           </div>
           {!isChangingPassword && (
-  <Button
-    variant="secondary"
-    onClick={() => setIsChangingPassword(true)}
-    className="text-xs px-3 py-1.5"
-  >
-    Change Password
-  </Button>
-)}
+            <Button
+              variant="secondary"
+              onClick={() => setIsChangingPassword(true)}
+              className="text-xs px-3 py-1.5"
+            >
+              Change Password
+            </Button>
+          )}
         </div>
 
         {passwordMessage && (
