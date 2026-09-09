@@ -49,39 +49,6 @@ async function fetchBase64Image(url: string): Promise<string | null> {
   }
 }
 
-// Draws the State Emblem of India (Ashoka Lion Capital crest) procedurally
-function drawStateEmblem(doc: jsPDF, centerX: number, topY: number) {
-  doc.saveGraphicsState();
-  doc.setDrawColor(25, 25, 25);
-  doc.setFillColor(30, 30, 30);
-
-  // Capital Top Canopy (Abacus & Lions representation)
-  doc.setLineWidth(0.4);
-  doc.rect(centerX - 5.5, topY + 0.5, 11, 6, "S");
-  doc.line(centerX - 1.8, topY + 0.5, centerX - 1.8, topY + 6.5);
-  doc.line(centerX + 1.8, topY + 0.5, centerX + 1.8, topY + 6.5);
-
-  // Central Ashoka Chakra on abacus
-  doc.circle(centerX, topY + 8.5, 1.7, "S");
-  doc.circle(centerX, topY + 8.5, 0.4, "FD");
-
-  // Galloping Horse (Left) & Bull (Right) symbolic fluting
-  doc.setLineWidth(0.3);
-  doc.line(centerX - 5.2, topY + 8.2, centerX - 2.8, topY + 8.2);
-  doc.line(centerX + 2.8, topY + 8.2, centerX + 5.2, topY + 8.2);
-
-  // Base Pedestal
-  doc.rect(centerX - 6.5, topY + 10.5, 13, 1.2, "FD");
-
-  // National Motto: "सत्यमेव जयते" / SATYAMEVA JAYATE
-  doc.setFont("times", "bold");
-  doc.setFontSize(5.8);
-  doc.setTextColor(40, 40, 40);
-  doc.text("सत्यमेव जयते", centerX, topY + 14.2, { align: "center" });
-
-  doc.restoreGraphicsState();
-}
-
 export async function generateComplianceReport({
   inspection,
   extraction,
@@ -561,7 +528,7 @@ export async function generateComplianceReport({
   doc.text("Controller of Legal Metrology", pageWidth - 70, signY + 8);
 
   // Running Official Footers
-  const totalPages = (doc as any).internal.getNumberOfPages();
+  const totalPages = doc.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
     drawPageBorders(doc);
