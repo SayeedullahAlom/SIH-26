@@ -1,61 +1,1230 @@
-import os
-import uuid
+from __future__ import annotations
 
-import psycopg2
-from dotenv import load_dotenv
+import re
+import uuid
+from decimal import Decimal, InvalidOperation
+from typing import Any, Callable
+
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.compliance_verdict import ComplianceVerdict
-from app.models.inspection import Inspection
-
-
-load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL")
+from app.models.inspection_extraction import InspectionExtraction
 
 
 # ============================================================
-# PCR 2011 AUTHORITATIVE RULE MAPPING
-# ============================================================
-#
-# These mappings are defined from the team's compliance criteria.
-# RAG is used to store/retrieve the authoritative legal text,
-# but semantic similarity is NOT trusted to choose the legal
-# clause for a compliance verdict.
-#
+# LEGAL DECLARATION REGISTRY
 # ============================================================
 
-CATEGORY_RULE_REFERENCES = {
-    "mrp": ["Rule 6(1)(e)"],
-    "net_quantity": ["Rule 6(1)(c)"],
-    "manufacturer_details": ["Rule 6(1)(a)"],
-    "country_of_origin": ["Rule 6(1)(a)"],
-    "consumer_care": ["Rule 6(2)"],
+DECLARATION_RULES = {
+    "package_scope": {
+        "rule_reference": "Rule 3",
+        "label": "Package Scope",
+    },
+
+    "manufacturer_packer_importer": {
+        "rule_reference": "Rule 6(1)(a)",
+        "label": "Manufacturer / Packer / Importer",
+    },
+
+    "product_identity": {
+        "rule_reference": "Rule 6(1)(b)",
+        "label": "Product Identity",
+    },
+
+    "net_quantity": {
+        "rule_reference": "Rule 6(1)(c)",
+        "label": "Net Quantity",
+    },
+
+    "date_info": {
+        "rule_reference": "Rule 6(1)(d)",
+        "label": "Date Information",
+    },
+
+    "mrp": {
+        "rule_reference": "Rule 6(1)(e)",
+        "label": "Maximum Retail Price (MRP)",
+    },
+
+    "dimensions": {
+        "rule_reference": "Rule 6(1)(f)-(g)",
+        "label": "Dimensions",
+    },
+
+    "consumer_care": {
+        "rule_reference": "Rule 6(2)",
+        "label": "Consumer Care Details",
+    },
 }
 
 
 # ============================================================
-# EXACT RULE LOOKUP
+# EXTRACTION HELPERS
 # ============================================================
 
-def get_rule_by_reference(clause_reference: str) -> dict | None:
-    """
-    Retrieve an authoritative PCR 2011 rule directly from
-    the rules_chunks table using its clause reference.
+def _field(
+    extraction: dict[str, Any],
+    field_name: str,
+) -> dict[str, Any]:
 
-    This is safer than relying on semantic top-1 retrieval
-    for the legal basis of a compliance verdict.
-    """
+    raw = extraction.get(field_name)
 
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL is not set")
+    if not isinstance(raw, dict):
+        return {
+            "value": None,
+            "confidence": None,
+            "status": "not_visible",
+        }
 
-    conn = psycopg2.connect(DATABASE_URL)
+    return {
+        "value": raw.get("value"),
+        "confidence": raw.get("confidence"),
+        "status": str(
+            raw.get("status", "not_visible")
+        ).lower(),
+    }
+
+
+def _value(
+    extraction: dict[str, Any],
+    field_name: str,
+) -> Any:
+
+    return _field(
+        extraction,
+        field_name,
+    )["value"]
+
+
+def _status(
+    extraction: dict[str, Any],
+    field_name: str,
+) -> str:
+
+    return _field(
+        extraction,
+        field_name,
+    )["status"]
+
+
+def _is_visible(
+    extraction: dict[str, Any],
+    field_name: str,
+) -> bool:
+
+    field = _field(
+        extraction,
+        field_name,
+    )
+
+    return (
+        field["status"] == "visible"
+        and field["value"] not in (None, "")
+    )
+
+
+def _is_illegible(
+    extraction: dict[str, Any],
+    field_name: str,
+) -> bool:
+
+    return (
+        _status(
+            extraction,
+            field_name,
+        )
+        == "illegible"
+    )
+
+
+# ============================================================
+# RESULT HELPER
+# ============================================================
+
+def _result(
+    verdict: str,
+    reasoning: str,
+    evidence_field: str | None = None,
+    evidence_value: str | None = None,
+) -> dict[str, Any]:
+
+    return {
+        "verdict": verdict,
+        "reasoning": reasoning,
+        "evidence_field": evidence_field,
+        "evidence_value": evidence_value,
+    }
+
+
+# ============================================================
+# QUANTITY PARSING
+# ============================================================
+
+def _normalise_unit(
+    unit: Any,
+) -> str | None:
+
+    if unit is None:
+        return None
+
+    value = str(unit).strip().lower()
+
+    value = value.replace(".", "")
+    value = value.replace(" ", "")
+
+    aliases = {
+        "kg": "kg",
+        "kgs": "kg",
+        "kilogram": "kg",
+        "kilograms": "kg",
+
+        "g": "g",
+        "gm": "g",
+        "gms": "g",
+        "gram": "g",
+        "grams": "g",
+
+        "l": "l",
+        "ltr": "l",
+        "ltrs": "l",
+        "litre": "l",
+        "litres": "l",
+        "liter": "l",
+        "liters": "l",
+
+        "ml": "ml",
+        "millilitre": "ml",
+        "millilitres": "ml",
+        "milliliter": "ml",
+        "milliliters": "ml",
+    }
+
+    return aliases.get(value)
+
+
+def _extract_quantity_and_unit(
+    extraction: dict[str, Any],
+) -> tuple[Decimal | None, str | None]:
+
+    quantity_field = _field(
+        extraction,
+        "net_quantity",
+    )
+
+    unit_field = _field(
+        extraction,
+        "net_quantity_unit",
+    )
+
+    raw_quantity = quantity_field.get("value")
+    raw_unit = unit_field.get("value")
+
+    if raw_quantity in (None, ""):
+        return None, None
+
+    quantity_text = str(
+        raw_quantity
+    ).strip()
+
+    # --------------------------------------------------------
+    # Extract number
+    # --------------------------------------------------------
+
+    number_match = re.search(
+        r"\d+(?:,\d{3})*(?:\.\d+)?",
+        quantity_text,
+    )
+
+    if not number_match:
+        return None, None
+
+    number_text = (
+        number_match.group(0)
+        .replace(",", "")
+    )
 
     try:
-        cur = conn.cursor()
+        quantity = Decimal(
+            number_text
+        )
+    except InvalidOperation:
+        return None, None
 
-        cur.execute(
+    # --------------------------------------------------------
+    # First preference:
+    # separately extracted unit
+    # --------------------------------------------------------
+
+    unit = _normalise_unit(
+        raw_unit
+    )
+
+    # --------------------------------------------------------
+    # If unit field is missing, extract it from:
+    #
+    # "500 ml"
+    # "500ml"
+    # "1 kg"
+    # "2.5 L"
+    # --------------------------------------------------------
+
+    if unit is None:
+
+        unit_match = re.search(
+            r"(kg|kgs|kilograms?|"
+            r"g|gm|gms|grams?|"
+            r"ml|millilit(?:re|er)s?|"
+            r"l|ltr|ltrs|lit(?:re|er)s?)",
+            quantity_text.lower(),
+        )
+
+        if unit_match:
+            unit = _normalise_unit(
+                unit_match.group(1)
+            )
+
+    return quantity, unit
+
+
+def _quantity_in_kg(
+    extraction: dict[str, Any],
+) -> Decimal | None:
+
+    quantity, unit = _extract_quantity_and_unit(
+        extraction
+    )
+
+    if quantity is None:
+        return None
+
+    if unit == "kg":
+        return quantity
+
+    if unit == "g":
+        return quantity / Decimal("1000")
+
+    return None
+
+
+def _quantity_in_litres(
+    extraction: dict[str, Any],
+) -> Decimal | None:
+
+    quantity, unit = _extract_quantity_and_unit(
+        extraction
+    )
+
+    if quantity is None:
+        return None
+
+    if unit == "l":
+        return quantity
+
+    if unit == "ml":
+        return quantity / Decimal("1000")
+
+    return None
+
+
+# ============================================================
+# RULE 3
+# PACKAGE SCOPE
+# ============================================================
+
+def evaluate_package_scope(
+    extraction: dict[str, Any],
+) -> dict[str, Any]:
+
+    quantity, unit = _extract_quantity_and_unit(
+        extraction
+    )
+
+    if quantity is None or unit is None:
+
+        return _result(
+            "REVIEW_REQUIRED",
+            (
+                "The declared net quantity could not be "
+                "confidently interpreted. The 25 kg / 25 litre "
+                "applicability threshold therefore requires "
+                "manual review."
+            ),
+            evidence_field="net_quantity",
+            evidence_value=str(
+                _value(
+                    extraction,
+                    "net_quantity",
+                )
+                or ""
+            ),
+        )
+
+    # --------------------------------------------------------
+    # MASS
+    # --------------------------------------------------------
+
+    if unit in {"kg", "g"}:
+
+        quantity_kg = (
+            quantity
+            if unit == "kg"
+            else quantity / Decimal("1000")
+        )
+
+        if quantity_kg > Decimal("25"):
+
+            return _result(
+                "PASS",
+                (
+                    f"The declared quantity is "
+                    f"{quantity_kg} kg, which is above "
+                    "25 kg. The Chapter II packaged-commodity "
+                    "requirements covered by the 25 kg threshold "
+                    "are therefore not applicable."
+                ),
+                evidence_field="net_quantity",
+                evidence_value=(
+                    f"{quantity} {unit}"
+                ),
+            )
+
+        return _result(
+            "PASS",
+            (
+                f"The declared quantity is "
+                f"{quantity_kg} kg, which is not above "
+                "25 kg. The normal Chapter II packaged-commodity "
+                "requirements apply."
+            ),
+            evidence_field="net_quantity",
+            evidence_value=(
+                f"{quantity} {unit}"
+            ),
+        )
+
+    # --------------------------------------------------------
+    # LIQUID VOLUME
+    # --------------------------------------------------------
+
+    if unit in {"l", "ml"}:
+
+        quantity_litres = (
+            quantity
+            if unit == "l"
+            else quantity / Decimal("1000")
+        )
+
+        if quantity_litres > Decimal("25"):
+
+            return _result(
+                "PASS",
+                (
+                    f"The declared quantity is "
+                    f"{quantity_litres} litres, which is above "
+                    "25 litres. The Chapter II packaged-commodity "
+                    "requirements covered by the 25 litre threshold "
+                    "are therefore not applicable."
+                ),
+                evidence_field="net_quantity",
+                evidence_value=(
+                    f"{quantity} {unit}"
+                ),
+            )
+
+        return _result(
+            "PASS",
+            (
+                f"The declared quantity is "
+                f"{quantity_litres} litres, which is not above "
+                "25 litres. The normal Chapter II packaged-commodity "
+                "requirements apply."
+            ),
+            evidence_field="net_quantity",
+            evidence_value=(
+                f"{quantity} {unit}"
+            ),
+        )
+
+    return _result(
+        "REVIEW_REQUIRED",
+        (
+            f"The unit '{unit}' could not be reliably classified "
+            "for the package-scope applicability test."
+        ),
+        evidence_field="net_quantity",
+        evidence_value=str(
+            quantity
+        ),
+    )
+
+
+# ============================================================
+# RULE 6(1)(a)
+# MANUFACTURER / PACKER / IMPORTER
+# ============================================================
+
+def evaluate_manufacturer_packer_importer(
+    extraction: dict[str, Any],
+) -> dict[str, Any]:
+
+    parties = [
+        (
+            "manufacturer",
+            "manufacturer_name",
+            "manufacturer_address",
+        ),
+        (
+            "packer",
+            "packer_name",
+            "packer_address",
+        ),
+        (
+            "importer",
+            "importer_name",
+            "importer_address",
+        ),
+    ]
+
+    illegible_fields = []
+
+    for _, name_field, address_field in parties:
+
+        if _is_illegible(
+            extraction,
+            name_field,
+        ):
+            illegible_fields.append(
+                name_field
+            )
+
+        if _is_illegible(
+            extraction,
+            address_field,
+        ):
+            illegible_fields.append(
+                address_field
+            )
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    #
+    # Rule 6(1)(a) is satisfied when the applicable responsible
+    # party is identified with name + address.
+    #
+    # We do NOT require manufacturer + packer + importer all
+    # at the same time.
+    # --------------------------------------------------------
+
+    for role, name_field, address_field in parties:
+
+        if (
+            _is_visible(
+                extraction,
+                name_field,
+            )
+            and _is_visible(
+                extraction,
+                address_field,
+            )
+        ):
+
+            return _result(
+                "PASS",
+                (
+                    f"{role.capitalize()} name and address "
+                    "are visible."
+                ),
+                evidence_field=(
+                    f"{name_field}, {address_field}"
+                ),
+                evidence_value=(
+                    f"{_value(extraction, name_field)} | "
+                    f"{_value(extraction, address_field)}"
+                ),
+            )
+
+    # --------------------------------------------------------
+    # Partial / illegible information
+    # --------------------------------------------------------
+
+    if illegible_fields:
+
+        return _result(
+            "REVIEW_REQUIRED",
+            (
+                "A manufacturer, packer, or importer declaration "
+                "appears to be present but one or more fields "
+                "are illegible."
+            ),
+            evidence_field=", ".join(
+                illegible_fields
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Name without address
+    # --------------------------------------------------------
+
+    for role, name_field, address_field in parties:
+
+        if (
+            _is_visible(
+                extraction,
+                name_field,
+            )
+            and not _is_visible(
+                extraction,
+                address_field,
+            )
+        ):
+
+            return _result(
+                "ISSUE",
+                (
+                    f"{role.capitalize()} name was detected, "
+                    "but the corresponding address was not detected."
+                ),
+                evidence_field=name_field,
+                evidence_value=str(
+                    _value(
+                        extraction,
+                        name_field,
+                    )
+                ),
+            )
+
+    return _result(
+        "ISSUE",
+        (
+            "No complete applicable manufacturer, packer, "
+            "or importer name-and-address declaration "
+            "was detected."
+        ),
+    )
+
+
+# ============================================================
+# RULE 6(1)(b)
+# PRODUCT IDENTITY
+# ============================================================
+
+def evaluate_product_identity(
+    extraction: dict[str, Any],
+) -> dict[str, Any]:
+
+    generic_name = _field(
+        extraction,
+        "generic_name",
+    )
+
+    product_name = _field(
+        extraction,
+        "product_name",
+    )
+
+    # Generic/common name is the important legal field.
+
+    if (
+        generic_name["status"] == "visible"
+        and generic_name["value"]
+    ):
+
+        return _result(
+            "PASS",
+            (
+                "The common or generic name of the "
+                "commodity was detected."
+            ),
+            evidence_field="generic_name",
+            evidence_value=str(
+                generic_name["value"]
+            ),
+        )
+
+    if generic_name["status"] == "illegible":
+
+        return _result(
+            "REVIEW_REQUIRED",
+            (
+                "A common or generic name appears to be "
+                "present but is illegible."
+            ),
+            evidence_field="generic_name",
+        )
+
+    if product_name["status"] == "illegible":
+
+        return _result(
+            "REVIEW_REQUIRED",
+            (
+                "Product identity text was detected but is "
+                "illegible, while the generic/common name "
+                "was not clearly extracted."
+            ),
+            evidence_field="product_name",
+        )
+
+    return _result(
+        "ISSUE",
+        (
+            "Required common or generic name of the "
+            "commodity was not detected."
+        ),
+    )
+
+
+# ============================================================
+# RULE 6(1)(c)
+# NET QUANTITY
+# ============================================================
+
+def evaluate_net_quantity(
+    extraction: dict[str, Any],
+) -> dict[str, Any]:
+
+    quantity = _field(
+        extraction,
+        "net_quantity",
+    )
+
+    unit = _field(
+        extraction,
+        "net_quantity_unit",
+    )
+
+    # --------------------------------------------------------
+    # Normal case:
+    #
+    # net_quantity = 500
+    # net_quantity_unit = ml
+    # --------------------------------------------------------
+
+    if (
+        quantity["status"] == "visible"
+        and quantity["value"]
+        and unit["status"] == "visible"
+        and unit["value"]
+    ):
+
+        return _result(
+            "PASS",
+            (
+                "Net quantity and its unit of measurement "
+                "are visible."
+            ),
+            evidence_field=(
+                "net_quantity, net_quantity_unit"
+            ),
+            evidence_value=(
+                f"{quantity['value']} "
+                f"{unit['value']}"
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Combined extraction case:
+    #
+    # net_quantity = "500 ml"
+    # net_quantity_unit = missing
+    #
+    # Vision AI sometimes returns the declaration this way.
+    # It is still sufficient to identify the declaration.
+    # --------------------------------------------------------
+
+    combined_quantity = _extract_quantity_and_unit(
+        extraction
+    )
+
+    if (
+        quantity["status"] == "visible"
+        and quantity["value"]
+        and combined_quantity[0] is not None
+        and combined_quantity[1] is not None
+    ):
+
+        parsed_quantity, parsed_unit = (
+            combined_quantity
+        )
+
+        return _result(
+            "PASS",
+            (
+                "Net quantity declaration was detected "
+                f"as {parsed_quantity} {parsed_unit}."
+            ),
+            evidence_field="net_quantity",
+            evidence_value=str(
+                quantity["value"]
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Illegible
+    # --------------------------------------------------------
+
+    if (
+        quantity["status"] == "illegible"
+        or unit["status"] == "illegible"
+    ):
+
+        return _result(
+            "REVIEW_REQUIRED",
+            (
+                "Net quantity or its unit is present "
+                "but illegible."
+            ),
+            evidence_field=(
+                "net_quantity, net_quantity_unit"
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Missing quantity
+    # --------------------------------------------------------
+
+    if not quantity["value"]:
+
+        return _result(
+            "ISSUE",
+            (
+                "Required net quantity declaration "
+                "was not detected."
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Missing unit
+    # --------------------------------------------------------
+
+    if not unit["value"]:
+
+        return _result(
+            "ISSUE",
+            (
+                "Net quantity was detected, but its "
+                "unit of measurement was not detected."
+            ),
+            evidence_field="net_quantity",
+            evidence_value=str(
+                quantity["value"]
+            ),
+        )
+
+    return _result(
+        "ISSUE",
+        "Net quantity declaration is incomplete.",
+    )
+
+
+# ============================================================
+# RULE 6(1)(d)
+# DATE INFORMATION
+# ============================================================
+
+def evaluate_date_info(
+    extraction: dict[str, Any],
+) -> dict[str, Any]:
+
+    manufacture_date = _field(
+        extraction,
+        "manufacture_date",
+    )
+
+    packing_date = _field(
+        extraction,
+        "packing_date",
+    )
+
+    import_date = _field(
+        extraction,
+        "import_date",
+    )
+
+    # --------------------------------------------------------
+    # Manufacture date
+    # --------------------------------------------------------
+
+    if (
+        manufacture_date["status"] == "visible"
+        and manufacture_date["value"]
+    ):
+
+        return _result(
+            "PASS",
+            "Manufacture date information was detected.",
+            evidence_field="manufacture_date",
+            evidence_value=str(
+                manufacture_date["value"]
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Packing date
+    # --------------------------------------------------------
+
+    if (
+        packing_date["status"] == "visible"
+        and packing_date["value"]
+    ):
+
+        return _result(
+            "PASS",
+            "Packing date information was detected.",
+            evidence_field="packing_date",
+            evidence_value=str(
+                packing_date["value"]
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Import date
+    # --------------------------------------------------------
+
+    if (
+        import_date["status"] == "visible"
+        and import_date["value"]
+    ):
+
+        return _result(
+            "PASS",
+            "Import date information was detected.",
+            evidence_field="import_date",
+            evidence_value=str(
+                import_date["value"]
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Illegible
+    # --------------------------------------------------------
+
+    if any(
+        field["status"] == "illegible"
+        for field in (
+            manufacture_date,
+            packing_date,
+            import_date,
+        )
+    ):
+
+        return _result(
+            "REVIEW_REQUIRED",
+            (
+                "Date information appears to be present "
+                "but could not be read reliably."
+            ),
+            evidence_field=(
+                "manufacture_date, packing_date, import_date"
+            ),
+        )
+
+    return _result(
+        "ISSUE",
+        (
+            "Required manufacture, packing, or import "
+            "date information was not detected."
+        ),
+    )
+
+
+# ============================================================
+# RULE 6(1)(e)
+# MRP
+# ============================================================
+
+def evaluate_mrp(
+    extraction: dict[str, Any],
+) -> dict[str, Any]:
+
+    mrp = _field(
+        extraction,
+        "mrp",
+    )
+
+    if (
+        mrp["status"] == "visible"
+        and mrp["value"]
+    ):
+
+        value = str(
+            mrp["value"]
+        )
+
+        if re.search(
+            r"\d",
+            value,
+        ):
+
+            return _result(
+                "PASS",
+                (
+                    "MRP is visible and contains a "
+                    "numeric price value."
+                ),
+                evidence_field="mrp",
+                evidence_value=value,
+            )
+
+        return _result(
+            "ISSUE",
+            (
+                "MRP text was detected but no numeric "
+                "price value was found."
+            ),
+            evidence_field="mrp",
+            evidence_value=value,
+        )
+
+    if mrp["status"] == "illegible":
+
+        return _result(
+            "REVIEW_REQUIRED",
+            (
+                "MRP appears to be present but is illegible."
+            ),
+            evidence_field="mrp",
+        )
+
+    return _result(
+        "ISSUE",
+        "Required MRP declaration was not detected.",
+    )
+
+
+# ============================================================
+# RULE 6(1)(f)-(g)
+# DIMENSIONS
+# ============================================================
+
+def evaluate_dimensions(
+    extraction: dict[str, Any],
+) -> dict[str, Any]:
+
+    dimensions = _field(
+        extraction,
+        "dimensions",
+    )
+
+    # --------------------------------------------------------
+    # Dimensions explicitly present
+    # --------------------------------------------------------
+
+    if (
+        dimensions["status"] == "visible"
+        and dimensions["value"]
+    ):
+
+        return _result(
+            "PASS",
+            "Dimensions declaration is visible.",
+            evidence_field="dimensions",
+            evidence_value=str(
+                dimensions["value"]
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Dimensions appear present but unreadable
+    # --------------------------------------------------------
+
+    if dimensions["status"] == "illegible":
+
+        return _result(
+            "REVIEW_REQUIRED",
+            (
+                "A dimensions declaration appears to be "
+                "present but is illegible. Manual verification "
+                "is required."
+            ),
+            evidence_field="dimensions",
+        )
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    #
+    # Absence of dimensions is NOT a violation.
+    #
+    # Dimensions are conditional under Rule 6(1)(f)-(g).
+    # Unless the system has established that dimensions are
+    # applicable to this commodity, we do not infer a violation.
+    #
+    # For the current MVP, this is treated as COMPLIANT rather
+    # than a violation.
+    # --------------------------------------------------------
+
+    return _result(
+        "PASS",
+        (
+            "No dimensions declaration was detected. "
+            "Dimensions are conditional under Rule 6(1)(f)-(g), "
+            "and the available extraction does not establish "
+            "that a dimensions declaration is applicable. "
+            "Therefore, no violation is inferred."
+        ),
+        evidence_field="dimensions",
+        evidence_value=None,
+    )
+
+
+# ============================================================
+# RULE 6(2)
+# CONSUMER CARE
+# ============================================================
+
+def evaluate_consumer_care(
+    extraction: dict[str, Any],
+) -> dict[str, Any]:
+
+    consumer_care = _field(
+        extraction,
+        "consumer_care",
+    )
+
+    if (
+        consumer_care["status"] == "visible"
+        and consumer_care["value"]
+    ):
+
+        return _result(
+            "PASS",
+            (
+                "Consumer care details are present "
+                "and visible."
+            ),
+            evidence_field="consumer_care",
+            evidence_value=str(
+                consumer_care["value"]
+            ),
+        )
+
+    if consumer_care["status"] == "illegible":
+
+        return _result(
+            "REVIEW_REQUIRED",
+            (
+                "Consumer care details appear to be "
+                "present but are illegible."
+            ),
+            evidence_field="consumer_care",
+        )
+
+    return _result(
+        "ISSUE",
+        (
+            "Required consumer care details "
+            "were not detected."
+        ),
+    )
+
+
+# ============================================================
+# EVALUATOR REGISTRY
+# ============================================================
+
+CATEGORY_EVALUATORS: dict[
+    str,
+    Callable[
+        [dict[str, Any]],
+        dict[str, Any],
+    ],
+] = {
+
+    "package_scope":
+        evaluate_package_scope,
+
+    "manufacturer_packer_importer":
+        evaluate_manufacturer_packer_importer,
+
+    "product_identity":
+        evaluate_product_identity,
+
+    "net_quantity":
+        evaluate_net_quantity,
+
+    "date_info":
+        evaluate_date_info,
+
+    "mrp":
+        evaluate_mrp,
+
+    "dimensions":
+        evaluate_dimensions,
+
+    "consumer_care":
+        evaluate_consumer_care,
+}
+
+
+# ============================================================
+# APPLICABILITY
+# ============================================================
+
+def is_declaration_applicable(
+    declaration_type: str,
+    extraction: dict[str, Any],
+) -> bool:
+
+    # Every registered category can be evaluated.
+    # Specific conditional logic is handled by the evaluator.
+
+    return declaration_type in DECLARATION_RULES
+
+
+# ============================================================
+# RULE RETRIEVAL
+# ============================================================
+
+def get_rule_by_reference(
+    db: Session,
+    clause_reference: str,
+) -> dict[str, Any] | None:
+
+    query = text(
+        """
+        SELECT
+            id,
+            clause_reference,
+            chapter,
+            title,
+            text
+        FROM rules_chunks
+        WHERE LOWER(TRIM(clause_reference))
+              = LOWER(TRIM(:clause_reference))
+        LIMIT 1
+        """
+    )
+
+    row = db.execute(
+        query,
+        {
+            "clause_reference":
+                clause_reference,
+        },
+    ).fetchone()
+
+    if row:
+
+        return {
+            "id": row[0],
+            "clause_reference": row[1],
+            "chapter": row[2],
+            "title": row[3],
+            "text": row[4],
+        }
+
+    # --------------------------------------------------------
+    # Fallback for formatting differences.
+    # --------------------------------------------------------
+
+    normalised_reference = re.sub(
+        r"[^a-z0-9]",
+        "",
+        clause_reference.lower(),
+    )
+
+    rows = db.execute(
+        text(
             """
             SELECT
                 id,
@@ -64,514 +1233,105 @@ def get_rule_by_reference(clause_reference: str) -> dict | None:
                 title,
                 text
             FROM rules_chunks
-            WHERE clause_reference = %s
-            LIMIT 1;
-            """,
-            (clause_reference,),
+            """
+        )
+    ).fetchall()
+
+    for row in rows:
+
+        stored_reference = re.sub(
+            r"[^a-z0-9]",
+            "",
+            str(row[1]).lower(),
         )
 
-        row = cur.fetchone()
-
-        if not row:
-            return None
-
-        return {
-            "id": str(row[0]),
-            "clause_reference": row[1],
-            "chapter": row[2],
-            "title": row[3],
-            "text": row[4],
-        }
-
-    finally:
-        conn.close()
-
-
-# ============================================================
-# EXTRACTION FIELD HELPER
-# ============================================================
-
-def _field(extraction_data: dict, key: str) -> dict:
-    """
-    Safely retrieve an extracted field.
-
-    If the field does not exist, treat it as not visible.
-    """
-
-    return extraction_data.get(key) or {
-        "value": None,
-        "confidence": None,
-        "status": "not_visible",
-    }
-
-
-# ============================================================
-# CATEGORY EVALUATORS
-# ============================================================
-
-def evaluate_mrp(extraction_data: dict) -> dict:
-    """
-    Evaluate MRP declaration.
-
-    PCR basis:
-        Rule 6(1)(e)
-
-    Team-defined criteria:
-        - visible + readable numeric MRP -> PASS
-        - illegible -> REVIEW_REQUIRED
-        - missing -> ISSUE
-    """
-
-    mrp = _field(extraction_data, "mrp")
-
-    status = mrp.get("status")
-    value = mrp.get("value")
-
-    if status == "visible":
-
-        if value and any(ch.isdigit() for ch in str(value)):
-            return {
-                "verdict": "PASS",
-                "reasoning": (
-                    "MRP is visible and contains a numeric value."
-                ),
-                "evidence_field": "mrp",
-                "evidence_value": str(value),
-            }
-
-        return {
-            "verdict": "ISSUE",
-            "reasoning": (
-                "MRP is visible but does not contain "
-                "a readable numeric value."
-            ),
-            "evidence_field": "mrp",
-            "evidence_value": str(value) if value else None,
-        }
-
-    if status == "illegible":
-        return {
-            "verdict": "REVIEW_REQUIRED",
-            "reasoning": (
-                "MRP appears to be present but is illegible."
-            ),
-            "evidence_field": "mrp",
-            "evidence_value": (
-                str(value) if value else None
-            ),
-        }
-
-    return {
-        "verdict": "ISSUE",
-        "reasoning": (
-            "MRP was not detected on the package."
-        ),
-        "evidence_field": "mrp",
-        "evidence_value": None,
-    }
-
-
-def evaluate_net_quantity(extraction_data: dict) -> dict:
-    """
-    Evaluate net quantity declaration.
-
-    PCR basis:
-        Rule 6(1)(c)
-
-    Team-defined criteria:
-        - quantity + unit visible -> PASS
-        - either illegible -> REVIEW_REQUIRED
-        - missing -> ISSUE
-    """
-
-    qty = _field(
-        extraction_data,
-        "net_quantity",
-    )
-
-    unit = _field(
-        extraction_data,
-        "net_quantity_unit",
-    )
-
-    if (
-        qty.get("status") == "visible"
-        and unit.get("status") == "visible"
-    ):
-
-        evidence = (
-            f"{qty.get('value')} "
-            f"{unit.get('value')}"
-        )
-
-        return {
-            "verdict": "PASS",
-            "reasoning": (
-                "Net quantity and unit of measurement "
-                "are visible."
-            ),
-            "evidence_field": "net_quantity",
-            "evidence_value": evidence,
-        }
-
-    if (
-        qty.get("status") == "illegible"
-        or unit.get("status") == "illegible"
-    ):
-
-        return {
-            "verdict": "REVIEW_REQUIRED",
-            "reasoning": (
-                "Net quantity or its unit of measurement "
-                "is illegible."
-            ),
-            "evidence_field": "net_quantity",
-            "evidence_value": (
-                f"{qty.get('value')} "
-                f"{unit.get('value')}"
-            ),
-        }
-
-    return {
-        "verdict": "ISSUE",
-        "reasoning": (
-            "Net quantity or its unit of measurement "
-            "was not detected."
-        ),
-        "evidence_field": "net_quantity",
-        "evidence_value": None,
-    }
-
-
-def evaluate_manufacturer_details(
-    extraction_data: dict,
-) -> dict:
-    """
-    Evaluate manufacturer/packer declaration.
-
-    PCR basis:
-        Rule 6(1)(a)
-
-    Team-defined criteria:
-        - complete manufacturer details -> PASS
-        - complete packer details -> PASS
-        - illegible details -> REVIEW_REQUIRED
-        - neither available -> ISSUE
-    """
-
-    manufacturer_name = _field(
-        extraction_data,
-        "manufacturer_name",
-    )
-
-    manufacturer_address = _field(
-        extraction_data,
-        "manufacturer_address",
-    )
-
-    packer_name = _field(
-        extraction_data,
-        "packer_name",
-    )
-
-    packer_address = _field(
-        extraction_data,
-        "packer_address",
-    )
-
-    manufacturer_complete = (
-        manufacturer_name.get("status") == "visible"
-        and manufacturer_address.get("status") == "visible"
-    )
-
-    packer_complete = (
-        packer_name.get("status") == "visible"
-        and packer_address.get("status") == "visible"
-    )
-
-    # --------------------------------------------------------
-    # Manufacturer details available
-    # --------------------------------------------------------
-
-    if manufacturer_complete:
-
-        evidence = (
-            f"{manufacturer_name.get('value')} - "
-            f"{manufacturer_address.get('value')}"
-        )
-
-        return {
-            "verdict": "PASS",
-            "reasoning": (
-                "Manufacturer name and address "
-                "are visible."
-            ),
-            "evidence_field": "manufacturer_name",
-            "evidence_value": evidence,
-        }
-
-    # --------------------------------------------------------
-    # Packer details available
-    # --------------------------------------------------------
-
-    if packer_complete:
-
-        evidence = (
-            f"{packer_name.get('value')} - "
-            f"{packer_address.get('value')}"
-        )
-
-        return {
-            "verdict": "PASS",
-            "reasoning": (
-                "Packer name and address are visible."
-            ),
-            "evidence_field": "packer_name",
-            "evidence_value": evidence,
-        }
-
-    # --------------------------------------------------------
-    # Some details are illegible
-    # --------------------------------------------------------
-
-    statuses = [
-        manufacturer_name.get("status"),
-        manufacturer_address.get("status"),
-        packer_name.get("status"),
-        packer_address.get("status"),
-    ]
-
-    if "illegible" in statuses:
-
-        return {
-            "verdict": "REVIEW_REQUIRED",
-            "reasoning": (
-                "Manufacturer or packer details "
-                "are partially illegible."
-            ),
-            "evidence_field": "manufacturer_name",
-            "evidence_value": (
-                manufacturer_name.get("value")
-                or packer_name.get("value")
-            ),
-        }
-
-    # --------------------------------------------------------
-    # No complete details detected
-    # --------------------------------------------------------
-
-    return {
-        "verdict": "ISSUE",
-        "reasoning": (
-            "Neither complete manufacturer nor complete "
-            "packer name and address details were detected."
-        ),
-        "evidence_field": "manufacturer_name",
-        "evidence_value": (
-            manufacturer_name.get("value")
-            or packer_name.get("value")
-        ),
-    }
-
-
-def evaluate_country_of_origin(
-    extraction_data: dict,
-) -> dict:
-    """
-    Evaluate imported-package information.
-
-    IMPORTANT:
-    Rule 6(1)(a) explicitly requires the importer name
-    and address for imported packages.
-
-    It does NOT, from the supplied PCR 2011 chunk, establish
-    a standalone country-of-origin declaration requirement.
-
-    Therefore this evaluator does NOT automatically mark a
-    package non-compliant merely because country_of_origin
-    is absent.
-
-    Current Phase 5 behavior:
-        - importer visible + country visible -> PASS
-        - importer visible + country missing -> REVIEW_REQUIRED
-        - importer illegible -> REVIEW_REQUIRED
-        - importer not detected -> REVIEW_REQUIRED
-
-    This keeps the category conservative until a separately
-    sourced legal basis for country-of-origin is established.
-    """
-
-    importer_name = _field(
-        extraction_data,
-        "importer_name",
-    )
-
-    country_of_origin = _field(
-        extraction_data,
-        "country_of_origin",
-    )
-
-    importer_status = importer_name.get("status")
-    coo_status = country_of_origin.get("status")
-
-    # --------------------------------------------------------
-    # Importer is illegible
-    # --------------------------------------------------------
-
-    if importer_status == "illegible":
-
-        return {
-            "verdict": "REVIEW_REQUIRED",
-            "reasoning": (
-                "Importer information is illegible, so "
-                "the imported-package declaration cannot "
-                "be assessed reliably."
-            ),
-            "evidence_field": "importer_name",
-            "evidence_value": importer_name.get("value"),
-        }
-
-    # --------------------------------------------------------
-    # Importer visible
-    # --------------------------------------------------------
-
-    if importer_status == "visible":
-
-        if coo_status == "visible":
+        if (
+            stored_reference
+            == normalised_reference
+        ):
 
             return {
-                "verdict": "PASS",
-                "reasoning": (
-                    "Importer information and the available "
-                    "country-of-origin declaration are visible."
-                ),
-                "evidence_field": "country_of_origin",
-                "evidence_value": (
-                    country_of_origin.get("value")
-                ),
+                "id": row[0],
+                "clause_reference": row[1],
+                "chapter": row[2],
+                "title": row[3],
+                "text": row[4],
             }
 
-        if coo_status == "illegible":
-
-            return {
-                "verdict": "REVIEW_REQUIRED",
-                "reasoning": (
-                    "Importer information is visible, but "
-                    "the available country-of-origin information "
-                    "is illegible."
-                ),
-                "evidence_field": "country_of_origin",
-                "evidence_value": (
-                    country_of_origin.get("value")
-                ),
-            }
-
-        return {
-            "verdict": "REVIEW_REQUIRED",
-            "reasoning": (
-                "Importer information is visible, but the "
-                "available extraction does not establish "
-                "whether a country-of-origin declaration is "
-                "present. Manual review is required."
-            ),
-            "evidence_field": "importer_name",
-            "evidence_value": (
-                importer_name.get("value")
-            ),
-        }
-
-    # --------------------------------------------------------
-    # Importer not detected
-    # --------------------------------------------------------
-
-    return {
-        "verdict": "REVIEW_REQUIRED",
-        "reasoning": (
-            "Importer information was not detected, so "
-            "it cannot be reliably determined whether the "
-            "package is an imported package requiring "
-            "importer details."
-        ),
-        "evidence_field": "importer_name",
-        "evidence_value": (
-            importer_name.get("value")
-        ),
-    }
+    return None
 
 
-def evaluate_consumer_care(
-    extraction_data: dict,
-) -> dict:
-    """
-    Evaluate consumer-care declaration.
+# ============================================================
+# LATEST EXTRACTION
+# ============================================================
 
-    PCR basis:
-        Rule 6(2)
+def get_latest_extraction(
+    db: Session,
+    inspection_id: uuid.UUID,
+) -> dict[str, Any] | None:
 
-    Current extraction model stores consumer-care information
-    as one combined field, so this is an evidence-presence
-    check rather than a complete statutory field-by-field
-    validation.
-    """
-
-    consumer_care = _field(
-        extraction_data,
-        "consumer_care",
+    record = (
+        db.query(
+            InspectionExtraction
+        )
+        .filter(
+            InspectionExtraction.inspection_id
+            == inspection_id
+        )
+        .order_by(
+            InspectionExtraction.created_at.desc()
+        )
+        .first()
     )
 
-    status = consumer_care.get("status")
-    value = consumer_care.get("value")
+    if record is None:
+        return None
 
-    if status == "visible" and value:
+    return record.extraction_data
 
-        return {
-            "verdict": "PASS",
-            "reasoning": (
-                "Consumer care details are present and visible."
-            ),
-            "evidence_field": "consumer_care",
-            "evidence_value": str(value),
-        }
 
-    if status == "illegible":
+# ============================================================
+# STORE VERDICT
+# ============================================================
 
-        return {
-            "verdict": "REVIEW_REQUIRED",
-            "reasoning": (
-                "Consumer care details are present "
-                "but illegible."
-            ),
-            "evidence_field": "consumer_care",
-            "evidence_value": (
-                str(value) if value else None
-            ),
-        }
+def _store_verdict(
+    db: Session,
+    inspection_id: uuid.UUID,
+    category: str,
+    evaluation: dict[str, Any],
+    rule_reference: str,
+    rule: dict[str, Any] | None,
+) -> ComplianceVerdict:
 
-    return {
-        "verdict": "ISSUE",
-        "reasoning": (
-            "Consumer care details were not detected."
+    # Use database clause reference when available.
+    # Otherwise preserve the configured legal reference.
+    resolved_reference = (
+        rule["clause_reference"]
+        if rule
+        else rule_reference
+    )
+
+    verdict = ComplianceVerdict(
+        inspection_id=inspection_id,
+        category=category,
+        verdict=evaluation["verdict"],
+        reasoning=evaluation["reasoning"],
+        evidence_field=evaluation.get(
+            "evidence_field"
         ),
-        "evidence_field": "consumer_care",
-        "evidence_value": None,
-    }
+        evidence_value=evaluation.get(
+            "evidence_value"
+        ),
+        rule_reference=resolved_reference,
+    )
+
+    db.add(verdict)
+
+    return verdict
 
 
 # ============================================================
-# CATEGORY EVALUATOR MAP
-# ============================================================
-
-CATEGORY_EVALUATORS = {
-    "mrp": evaluate_mrp,
-    "net_quantity": evaluate_net_quantity,
-    "manufacturer_details": evaluate_manufacturer_details,
-    "country_of_origin": evaluate_country_of_origin,
-    "consumer_care": evaluate_consumer_care,
-}
-
-
-# ============================================================
-# MAIN COMPLIANCE VERDICT ENGINE
+# MAIN VERDICT ENGINE
 # ============================================================
 
 def run_compliance_verdict(
@@ -580,124 +1340,122 @@ def run_compliance_verdict(
 ) -> list[ComplianceVerdict]:
 
     # --------------------------------------------------------
-    # 1. Get inspection
+    # 1. Get latest extraction
     # --------------------------------------------------------
 
-    inspection = (
-        db.query(Inspection)
-        .filter(
-            Inspection.id == inspection_id
-        )
-        .first()
+    extraction = get_latest_extraction(
+        db,
+        inspection_id,
     )
 
-    if not inspection:
+    if extraction is None:
+
         raise ValueError(
-            "Inspection not found."
+            "No extraction is available for this inspection."
+        )
+
+    if not isinstance(
+        extraction,
+        dict,
+    ):
+
+        raise ValueError(
+            "Stored extraction data is invalid."
         )
 
     # --------------------------------------------------------
-    # 2. Make sure Phase 4 extraction exists
+    # 2. Remove old verdicts
+    #
+    # Re-running the endpoint should replace the old verdict
+    # instead of creating duplicate rows.
     # --------------------------------------------------------
 
-    if not inspection.extractions:
-        raise ValueError(
-            "No Phase 4 extraction found for this inspection."
-        )
-
-    # --------------------------------------------------------
-    # 3. Use latest extraction
-    # --------------------------------------------------------
-
-    latest_extraction = sorted(
-        inspection.extractions,
-        key=lambda e: e.created_at,
-        reverse=True,
-    )[0]
-
-    extraction_data = (
-        latest_extraction.extraction_data
+    db.query(
+        ComplianceVerdict
+    ).filter(
+        ComplianceVerdict.inspection_id
+        == inspection_id
+    ).delete(
+        synchronize_session=False
     )
 
+    results: list[
+        ComplianceVerdict
+    ] = []
+
     # --------------------------------------------------------
-    # 4. Evaluate every compliance category
+    # 3. Evaluate every registered category
     # --------------------------------------------------------
 
-    results = []
-
-    for category, evaluator in CATEGORY_EVALUATORS.items():
+    for (
+        declaration_type,
+        metadata,
+    ) in DECLARATION_RULES.items():
 
         # ----------------------------------------------------
-        # Get authoritative PCR clause reference
+        # Applicability
         # ----------------------------------------------------
 
-        rule_references = (
-            CATEGORY_RULE_REFERENCES.get(category)
+        if not is_declaration_applicable(
+            declaration_type,
+            extraction,
+        ):
+            continue
+
+        rule_reference = metadata[
+            "rule_reference"
+        ]
+
+        # ----------------------------------------------------
+        # Retrieve authoritative rule
+        # ----------------------------------------------------
+
+        rule = get_rule_by_reference(
+            db,
+            rule_reference,
         )
 
-        if not rule_references:
-            raise ValueError(
-                f"No PCR 2011 rule configured for "
-                f"category: {category}"
-            )
-
         # ----------------------------------------------------
-        # Exact legal rule lookup
+        # Do not crash the entire verdict engine simply because
+        # a rule reference was stored slightly differently in
+        # rules_chunks.
+        #
+        # The configured reference is retained as fallback.
         # ----------------------------------------------------
 
-        rule = None
+        evaluator = CATEGORY_EVALUATORS[
+            declaration_type
+        ]
 
-        for reference in rule_references:
-
-            rule = get_rule_by_reference(
-                reference
-            )
-
-            if rule:
-                break
-
-        if not rule:
-            raise ValueError(
-                f"No PCR 2011 rule found in database "
-                f"for category: {category}"
-            )
-
-        # ----------------------------------------------------
-        # Apply team-defined compliance criteria
-        # ----------------------------------------------------
-
-        outcome = evaluator(
-            extraction_data
+        evaluation = evaluator(
+            extraction
         )
 
         # ----------------------------------------------------
         # Store verdict
         # ----------------------------------------------------
 
-        verdict_row = ComplianceVerdict(
+        verdict = _store_verdict(
+            db=db,
             inspection_id=inspection_id,
-            category=category,
-            verdict=outcome["verdict"],
-            reasoning=outcome["reasoning"],
-            evidence_field=outcome["evidence_field"],
-            evidence_value=outcome["evidence_value"],
-            rule_reference=rule["clause_reference"],
+            category=declaration_type,
+            evaluation=evaluation,
+            rule_reference=rule_reference,
+            rule=rule,
         )
 
-        db.add(verdict_row)
-
         results.append(
-            verdict_row
+            verdict
         )
 
     # --------------------------------------------------------
-    # 5. Commit all category verdicts
+    # 4. Commit
     # --------------------------------------------------------
 
     db.commit()
 
     # --------------------------------------------------------
-    # 6. Refresh generated fields such as id/created_at
+    # 5. Refresh generated fields
     # --------------------------------------------------------
 
     for result in results:

@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -35,8 +35,9 @@ def get_object_key(s3_url: str) -> str:
 
 
 @router.post("/{inspection_id}/extract")
-def extract_inspection(
+async def extract_inspection(
     inspection_id: uuid.UUID,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -100,14 +101,23 @@ def extract_inspection(
 
     # 5. Run Vision AI extraction
     try:
-        extraction_result = extract_from_images(image_data)
+        extraction_result = await extract_from_images(
+            image_data,
+            request=request,
+        )
+
+    except HTTPException:
+        raise
 
     except Exception as exc:
-    	print(f"VISION AI ERROR: {type(exc).__name__}: {exc}")
-    	raise HTTPException(
-        	status_code=502,
-        	detail="Vision AI extraction failed",
-    	) from exc
+        print(
+            f"VISION AI ERROR: {type(exc).__name__}: {exc}"
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Vision AI extraction failed",
+        ) from exc
+
     # 6. Store the extraction result
     extraction = InspectionExtraction(
         inspection_id=inspection.id,
