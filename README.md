@@ -307,7 +307,12 @@ This project was built with heavy AI assistance for code generation, prompt draf
 
 ## 👥 Team
 
-Built by **Team SIH-26** for Smart India Hackathon 2026.
+- Darshan Gupta
+- Shahid Afridi
+- Sayeedullah Alom
+- Binit Chanda
+- Arpita Singh
+- Lakhyaraj Rajkhowa
 
 <!-- Add contributor names / GitHub handles here -->
 
