@@ -16,23 +16,7 @@ interface GeneratePdfProps {
   categoryLabels: Record<string, string>;
 }
 
-// Convert HTMLImageElement to Base64 JPEG via Canvas
-function getBase64FromDomImage(imgElement: HTMLImageElement): string | null {
-  try {
-    const canvas = document.createElement("canvas");
-    canvas.width = imgElement.naturalWidth || imgElement.width || 400;
-    canvas.height = imgElement.naturalHeight || imgElement.height || 400;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.85);
-  } catch (err) {
-    console.warn("DOM canvas extraction failed:", err);
-    return null;
-  }
-}
-
-// Fallback async fetch
+// Fallback async fetch for R2 presigned URLs with CORS mode
 async function fetchBase64Image(url: string): Promise<string | null> {
   try {
     const res = await fetch(url, { mode: "cors" });
@@ -81,97 +65,97 @@ export async function generateComplianceReport({
 
   // Government Letterhead
   doc.setFont("times", "bold");
-  doc.setFontSize(10.5);
+  doc.setFontSize(10);
   doc.setTextColor(15, 15, 15);
-  doc.text("GOVERNMENT OF INDIA", pageWidth / 2, 22, {
+  doc.text("GOVERNMENT OF INDIA", pageWidth / 2, 18, {
     align: "center",
   });
 
-  doc.setFontSize(11);
+  doc.setFontSize(10.5);
   doc.text(
     "MINISTRY OF CONSUMER AFFAIRS, FOOD & PUBLIC DISTRIBUTION",
+    pageWidth / 2,
+    22.5,
+    { align: "center" }
+  );
+
+  doc.setFontSize(9);
+  doc.text(
+    "DEPARTMENT OF CONSUMER AFFAIRS — LEGAL METROLOGY DIVISION",
     pageWidth / 2,
     27,
     { align: "center" }
   );
 
-  doc.setFontSize(9.5);
-  doc.text(
-    "DEPARTMENT OF CONSUMER AFFAIRS — LEGAL METROLOGY DIVISION",
-    pageWidth / 2,
-    31.5,
-    { align: "center" }
-  );
-
   doc.setFont("times", "normal");
-  doc.setFontSize(7.2);
+  doc.setFontSize(6.8);
   doc.text(
     "[Statutory Enforcement under The Legal Metrology Act, 2009 & Packaged Commodities Rules, 2011]",
     pageWidth / 2,
-    35.5,
+    31,
     { align: "center" }
   );
 
   // Double Ornamental Dividing Rules
   doc.setLineWidth(0.5);
-  doc.line(14, 38, pageWidth - 14, 38);
+  doc.line(14, 33.5, pageWidth - 14, 33.5);
   doc.setLineWidth(0.15);
-  doc.line(14, 39, pageWidth - 14, 39);
+  doc.line(14, 34.5, pageWidth - 14, 34.5);
 
   // Certificate Header
   doc.setFont("times", "bold");
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   const certTitle = isPass
     ? "CERTIFICATE OF STATUTORY VERIFICATION & COMPLIANCE"
     : "MEMORANDUM OF STATUTORY NON-COMPLIANCE & INSPECTION NOTICE";
-  doc.text(certTitle, pageWidth / 2, 44.5, { align: "center" });
+  doc.text(certTitle, pageWidth / 2, 40, { align: "center" });
 
   // Metadata Panel Box
   doc.setLineWidth(0.25);
   doc.setDrawColor(120, 120, 120);
   doc.setFillColor(252, 252, 252);
-  doc.roundedRect(14, 48, pageWidth - 28, 18, 1, 1, "FD");
+  doc.roundedRect(14, 43, pageWidth - 28, 17, 1, 1, "FD");
 
-  doc.setFontSize(7.5);
+  doc.setFontSize(7.2);
   doc.setFont("times", "bold");
-  doc.text("DOSSIER REF ID:", 17, 53.5);
+  doc.text("DOSSIER REF ID:", 17, 48.5);
   doc.setFont("times", "normal");
-  doc.text(String(inspection?.id || "N/A"), 48, 53.5);
+  doc.text(String(inspection?.id || "N/A"), 46, 48.5);
 
   doc.setFont("times", "bold");
-  doc.text("COMMODITY / BRAND:", 17, 59);
+  doc.text("COMMODITY / BRAND:", 17, 54);
   doc.setFont("times", "normal");
   const prodName =
     extraction?.product_name?.value ||
     inspection?.product_name ||
     "Unnamed Commodity";
-  doc.text(String(prodName).slice(0, 42), 48, 59);
+  doc.text(String(prodName).slice(0, 42), 46, 54);
 
   doc.setFont("times", "bold");
-  doc.text("INSPECTING OFFICER ID:", 118, 53.5);
+  doc.text("INSPECTING OFFICER ID:", 118, 48.5);
   doc.setFont("times", "normal");
   doc.text(
     inspection?.officer_id
       ? `OFFICER-UNIT-${inspection.officer_id.slice(0, 8).toUpperCase()}`
       : "FIELD-ENF-UNIT-01",
     148,
-    53.5
+    48.5
   );
 
   doc.setFont("times", "bold");
-  doc.text("STATUTORY STATUS:", 118, 59);
+  doc.text("STATUTORY STATUS:", 118, 54);
   doc.setFont("times", "bold");
   if (isPass) {
     doc.setTextColor(16, 120, 60);
-    doc.text("COMPLIANT (PASSED)", 148, 59);
+    doc.text("COMPLIANT (PASSED)", 148, 54);
   } else {
     doc.setTextColor(180, 20, 20);
-    doc.text("NON-COMPLIANT", 148, 59);
+    doc.text("NON-COMPLIANT", 148, 54);
   }
   doc.setTextColor(20, 20, 20);
 
   // Section I: Verification of Mandatory Declarations
-  let currentY = 70;
+  let currentY = 64;
   doc.setFont("times", "bold");
   doc.setFontSize(8.5);
   doc.text(
@@ -258,17 +242,17 @@ export async function generateComplianceReport({
       textColor: [10, 10, 10],
       font: "times",
       fontStyle: "bold",
-      fontSize: 7.5,
+      fontSize: 7.2,
       lineWidth: 0.2,
       lineColor: [90, 90, 90],
     },
     bodyStyles: {
       font: "times",
-      fontSize: 7,
+      fontSize: 6.8,
       textColor: [20, 20, 20],
       lineWidth: 0.1,
       lineColor: [180, 180, 180],
-      cellPadding: 1.5, // Reduced padding to prevent vertical overflow/overlapping
+      cellPadding: 1.2,
     },
     columnStyles: {
       0: { cellWidth: 48, fontStyle: "bold" },
@@ -292,7 +276,7 @@ export async function generateComplianceReport({
   });
 
   // Section II: Statutory Compliance Determination & Overrides
-  currentY = (doc.lastAutoTable?.finalY ?? currentY) + 7;
+  currentY = (doc.lastAutoTable?.finalY ?? currentY) + 6;
 
   if (currentY > 218) {
     doc.addPage();
@@ -360,17 +344,17 @@ export async function generateComplianceReport({
       textColor: [10, 10, 10],
       font: "times",
       fontStyle: "bold",
-      fontSize: 7.5,
+      fontSize: 7.2,
       lineWidth: 0.2,
       lineColor: [90, 90, 90],
     },
     bodyStyles: {
       font: "times",
-      fontSize: 7,
+      fontSize: 6.8,
       textColor: [20, 20, 20],
       lineWidth: 0.1,
       lineColor: [180, 180, 180],
-      cellPadding: 1.8,
+      cellPadding: 1.5,
     },
     columnStyles: {
       0: { cellWidth: 40, fontStyle: "bold" },
@@ -397,7 +381,7 @@ export async function generateComplianceReport({
     tableWidth: 'auto',
   });
 
-  // Section III: Inspected Commodity Packaging Specimens
+  // Section III: Inspected Commodity Packaging Specimens (Robust Async Fetch)
   const images = inspection?.images || [];
   if (images.length > 0) {
     doc.addPage();
@@ -405,7 +389,7 @@ export async function generateComplianceReport({
     currentY = 18;
 
     doc.setFont("times", "bold");
-    doc.setFontSize(9);
+    doc.setFontSize(8.5);
     doc.text(
       "III. INSPECTED COMMODITY PACKAGING SPECIMENS (PHOTOGRAPHIC EXHIBITS)",
       14,
@@ -422,16 +406,9 @@ export async function generateComplianceReport({
       const imgObj = images[i];
       let base64Data: string | null = null;
 
-      const domImg = document.getElementById(
-        `inspection-img-${i}`
-      ) as HTMLImageElement;
-      if (domImg && domImg.complete && domImg.naturalWidth > 0) {
-        base64Data = getBase64FromDomImage(domImg);
-      }
-
-      if (!base64Data) {
-        const imgUrl = imgObj.download_url || imgObj.url;
-        if (imgUrl) base64Data = await fetchBase64Image(imgUrl);
+      const imgUrl = imgObj.download_url || imgObj.url;
+      if (imgUrl) {
+        base64Data = await fetchBase64Image(imgUrl);
       }
 
       if (base64Data) {
@@ -496,7 +473,7 @@ export async function generateComplianceReport({
     "NOTICE UNDER SECTION 36, LEGAL METROLOGY ACT, 2009: Whoever manufactures, packs, imports, sells, distributes, or exposes for sale any pre-packaged commodity which does not conform to the declarations on the package as stipulated by the Legal Metrology (Packaged Commodities) Rules, 2011 shall be punishable with fine which may extend to twenty-five thousand rupees, for the second offence to fifty thousand rupees, and for subsequent offence with fine up to one lakh rupees or imprisonment. This document constitutes an official statutory verification record.";
   doc.text(doc.splitTextToSize(legalNotice, pageWidth - 28), 14, currentY);
 
-  const signY = currentY + 20;
+  const signY = currentY + 18;
   doc.setFont("times", "normal");
   doc.setFontSize(7.5);
 
