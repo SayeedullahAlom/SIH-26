@@ -121,8 +121,7 @@ def read_current_user(
         db.query(func.count(Inspection.id))
         .filter(
             Inspection.officer_id == current_user.id,
-            Inspection.overall_result.ilike("%compliant%"),
-            ~Inspection.overall_result.ilike("%non%"),
+            (Inspection.status == "COMPLIANT") | (Inspection.overall_result.ilike("COMPLIANT")),
         )
         .scalar()
         or 0
@@ -132,7 +131,7 @@ def read_current_user(
         db.query(func.count(Inspection.id))
         .filter(
             Inspection.officer_id == current_user.id,
-            Inspection.overall_result.ilike("%non%compliant%"),
+            (Inspection.status == "NON_COMPLIANT") | (Inspection.overall_result.ilike("%NON_COMPLIANT%")),
         )
         .scalar()
         or 0
@@ -142,7 +141,7 @@ def read_current_user(
         db.query(func.count(Inspection.id))
         .filter(
             Inspection.officer_id == current_user.id,
-            Inspection.status == "pending",
+            (Inspection.status == "PENDING") | (Inspection.status == "pending"),
         )
         .scalar()
         or 0

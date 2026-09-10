@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Upload, X, Loader2, ArrowLeft, Image as ImageIcon } from "lucide-react";
+import { Upload, X, Loader2, ArrowLeft, Image as ImageIcon, Camera, FolderOpen } from "lucide-react";
 import { motion } from "framer-motion";
 import { api } from "../lib/api";
 import Card from "../components/ui/Card";
@@ -31,7 +31,9 @@ export default function NewInspection() {
   const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState("");
 
-  const fileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+  // Separate refs for camera vs gallery per slot
+  const cameraInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+  const galleryInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
 
   const handleFileSelect = (side: string, file: File | null) => {
     if (!file) return;
@@ -71,14 +73,12 @@ export default function NewInspection() {
     try {
       const uploadedImagesPayload: { file_key: string; side: string }[] = [];
 
-      // Upload each image via presigned URL to R2
       for (let i = 0; i < selectedImages.length; i++) {
         const slot = selectedImages[i];
         const file = slot.file!;
         
         setStatusMessage(`Requesting upload ticket for ${slot.label}...`);
 
-        // 1. Send filename and content_type to satisfy PresignedUrlRequest
         const presignedRes = await api.post("/inspections/presigned-url", {
           filename: file.name,
           content_type: file.type || "image/jpeg",
@@ -88,7 +88,6 @@ export default function NewInspection() {
 
         setStatusMessage(`Uploading image ${i + 1} of ${selectedImages.length} to storage...`);
 
-        // 2. Direct binary upload to R2
         const uploadRes = await fetch(upload_url, {
           method: "PUT",
           headers: {
@@ -109,14 +108,12 @@ export default function NewInspection() {
 
       setStatusMessage("Registering audit record...");
 
-      // 3. Create inspection record in database
       const inspectionRes = await api.post("/inspections", {
         product_name: productName || null,
         manufacturer_hint: manufacturerHint || null,
         images: uploadedImagesPayload,
       });
 
-      // 4. Redirect directly to inspection detail view
       navigate(`/inspections/${inspectionRes.data.id}`);
     } catch (err: any) {
       console.error("Failed to create inspection:", err);
@@ -135,7 +132,7 @@ export default function NewInspection() {
       initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: "easeOut" }}
-      className="w-full max-w-4xl mx-auto flex flex-col gap-6"
+      className="w-full max-w-4xl mx-auto flex flex-col gap-6 p-4"
     >
       <div className="flex items-center gap-3">
         <button
@@ -218,19 +215,36 @@ export default function NewInspection() {
                 key={slot.side}
                 className="flex flex-col gap-2 p-3 rounded-2xl bg-zinc-50/70 border border-zinc-200/80 text-center relative group"
               >
+                {/* Hidden Camera Input */}
                 <input
-                type="file"
-  accept="image/*"
-  ref={(el) => {
-    fileInputRefs.current[slot.side] = el;
-  }}
-  className="hidden"
-  onChange={(e) => {
-    const file = e.target.files?.[0] || null;
-    handleFileSelect(slot.side, file);
-  }}
-  disabled={submitting}
-/>
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  ref={(el) => {
+                    cameraInputRefs.current[slot.side] = el;
+                  }}
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    handleFileSelect(slot.side, file);
+                  }}
+                  disabled={submitting}
+                />
+
+                {/* Hidden Gallery Input */}
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={(el) => {
+                    galleryInputRefs.current[slot.side] = el;
+                  }}
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    handleFileSelect(slot.side, file);
+                  }}
+                  disabled={submitting}
+                />
 
                 {slot.preview ? (
                   <div className="relative aspect-square rounded-xl overflow-hidden bg-black/5">
@@ -250,20 +264,30 @@ export default function NewInspection() {
                     )}
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => fileInputRefs.current[slot.side]?.click()}
-                    disabled={submitting}
-                    className="aspect-square rounded-xl border-2 border-dashed border-zinc-300 hover:border-[#1D3587] flex flex-col items-center justify-center gap-2 text-zinc-400 hover:text-[#1D3587] transition-colors p-3"
-                  >
-                    <ImageIcon size={28} />
-                    <span className="text-[11px] font-bold uppercase tracking-wider">
-                      Upload Panel
-                    </span>
-                  </button>
+                  <div className="aspect-square rounded-xl border-2 border-dashed border-zinc-300 flex flex-col items-center justify-center gap-2 p-2 bg-white">
+                    <ImageIcon size={22} className="text-zinc-400" />
+                    <div className="flex flex-col gap-1 w-full">
+                      <button
+                        type="button"
+                        onClick={() => cameraInputRefs.current[slot.side]?.click()}
+                        disabled={submitting}
+                        className="w-full py-1.5 px-2 bg-[#1D3587] text-white rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1 hover:bg-[#152763] transition"
+                      >
+                        <Camera size={12} /> Camera
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => galleryInputRefs.current[slot.side]?.click()}
+                        disabled={submitting}
+                        className="w-full py-1.5 px-2 bg-zinc-100 text-zinc-700 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1 hover:bg-zinc-200 transition"
+                      >
+                        <FolderOpen size={12} /> Gallery
+                      </button>
+                    </div>
+                  </div>
                 )}
 
-                <span className="text-xs font-bold text-[#0A1329] truncate">
+                <span className="text-xs font-bold text-[#0A1329] truncate mt-1">
                   {slot.label}
                 </span>
               </div>
