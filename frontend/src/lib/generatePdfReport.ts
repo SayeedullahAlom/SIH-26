@@ -16,29 +16,45 @@ interface GeneratePdfProps {
   categoryLabels: Record<string, string>;
 }
 
-// Strictly use async fetch with a cache-buster to bypass browser CORS cache conflicts
-async function fetchBase64Image(url: string): Promise<string | null> {
-  try {
-    // Append a unique timestamp to force the browser to bypass the cached <img> version
-    const cacheBustedUrl = url + (url.includes('?') ? '&' : '?') + 't=' + new Date().getTime();
+// NOTE: do NOT append a cache-buster query param to `url` here.
+// download_url is a presigned R2/S3 URL — its signature (X-Amz-Signature)
+// is computed over the exact query string it was issued with. Adding
+// `?t=...` / `&t=...` after the fact changes the request and R2 rejects
+// it (403 SignatureDoesNotMatch), so the fetch below always failed and
+// every image silently came back null. `cache: "no-store"` already
+// prevents stale browser caching without touching the URL.
+function getImageFormatFromDataUrl(dataUrl: string): "JPEG" | "PNG" | "WEBP" {
+  const match = dataUrl.match(/^data:image\/(\w+);base64/i);
+  const ext = (match?.[1] || "jpeg").toLowerCase();
+  if (ext === "png") return "PNG";
+  if (ext === "webp") return "WEBP";
+  return "JPEG";
+}
 
-    const res = await fetch(cacheBustedUrl, { 
-      mode: "cors", 
-      cache: "no-store" 
+async function fetchBase64Image(
+  url: string
+): Promise<{ dataUrl: string; format: "JPEG" | "PNG" | "WEBP" } | null> {
+  try {
+    const res = await fetch(url, {
+      mode: "cors",
+      cache: "no-store",
     });
-    
+
     if (!res.ok) {
       console.warn(`Failed to fetch image: HTTP ${res.status}`);
       return null;
     }
 
     const blob = await res.blob();
-    return new Promise((resolve) => {
+    const dataUrl = await new Promise<string | null>((resolve) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result as string);
       reader.onerror = () => resolve(null);
       reader.readAsDataURL(blob);
     });
+
+    if (!dataUrl) return null;
+    return { dataUrl, format: getImageFormatFromDataUrl(dataUrl) };
   } catch (err) {
     console.warn("Fetch fallback failed:", err);
     return null;
@@ -128,12 +144,32 @@ export async function generateComplianceReport({
   doc.setFillColor(252, 252, 252);
   doc.roundedRect(14, 48, pageWidth - 28, 18, 1, 1, "FD");
 
-  // Adjusted X coordinates to 58 (previously 48) to fix overlapping labels
+  // Values in this left column sit between x=58 and the right column's
+  // label at x=118. A fixed character-count slice (previously
+  // `.slice(0, 42)`) doesn't account for actual glyph width, so a long
+  // product name could render past x=118 and collide with "INSPECTING
+  // OFFICER ID:" / "STATUTORY STATUS:". Measure and truncate to the
+  // real available width instead.
+  const LEFT_VALUE_X = 58;
+  const LEFT_VALUE_MAX_WIDTH = 118 - LEFT_VALUE_X - 3; // stop 3mm before next column
+  const truncateToWidth = (text: string, maxWidth: number): string => {
+    if (doc.getTextWidth(text) <= maxWidth) return text;
+    let truncated = text;
+    while (truncated.length > 1 && doc.getTextWidth(`${truncated}…`) > maxWidth) {
+      truncated = truncated.slice(0, -1);
+    }
+    return `${truncated}…`;
+  };
+
   doc.setFontSize(7.5);
   doc.setFont("times", "bold");
   doc.text("DOSSIER REF ID:", 17, 53.5);
   doc.setFont("times", "normal");
-  doc.text(String(inspection?.id || "N/A"), 58, 53.5);
+  doc.text(
+    truncateToWidth(String(inspection?.id || "N/A"), LEFT_VALUE_MAX_WIDTH),
+    LEFT_VALUE_X,
+    53.5
+  );
 
   doc.setFont("times", "bold");
   doc.text("COMMODITY / BRAND:", 17, 59);
@@ -142,7 +178,11 @@ export async function generateComplianceReport({
     extraction?.product_name?.value ||
     inspection?.product_name ||
     "Unnamed Commodity";
-  doc.text(String(prodName).slice(0, 42), 58, 59);
+  doc.text(
+    truncateToWidth(String(prodName), LEFT_VALUE_MAX_WIDTH),
+    LEFT_VALUE_X,
+    59
+  );
 
   doc.setFont("times", "bold");
   doc.text("INSPECTING OFFICER ID:", 118, 53.5);
@@ -417,15 +457,15 @@ export async function generateComplianceReport({
 
     for (let i = 0; i < images.length; i++) {
       const imgObj = images[i];
-      let base64Data: string | null = null;
+      let fetched: { dataUrl: string; format: "JPEG" | "PNG" | "WEBP" } | null = null;
 
-      // Only use direct fetch with Cache-Buster to avoid Canvas Security Errors
+      // Fetch the presigned URL directly (untouched) to avoid Canvas Security Errors
       const imgUrl = imgObj.download_url || imgObj.url;
       if (imgUrl) {
-        base64Data = await fetchBase64Image(imgUrl);
+        fetched = await fetchBase64Image(imgUrl);
       }
 
-      if (base64Data) {
+      if (fetched) {
         if (startX + imgWidth > pageWidth - 14) {
           startX = 14;
           currentY += imgHeight + 12;
@@ -443,8 +483,8 @@ export async function generateComplianceReport({
 
         try {
           doc.addImage(
-            base64Data,
-            "JPEG",
+            fetched.dataUrl,
+            fetched.format,
             startX,
             currentY,
             imgWidth,
@@ -485,9 +525,13 @@ export async function generateComplianceReport({
   doc.setTextColor(40, 40, 40);
   const legalNotice =
     "NOTICE UNDER SECTION 36, LEGAL METROLOGY ACT, 2009: Whoever manufactures, packs, imports, sells, distributes, or exposes for sale any pre-packaged commodity which does not conform to the declarations on the package as stipulated by the Legal Metrology (Packaged Commodities) Rules, 2011 shall be punishable with fine which may extend to twenty-five thousand rupees, for the second offence to fifty thousand rupees, and for subsequent offence with fine up to one lakh rupees or imprisonment. This document constitutes an official statutory verification record.";
-  doc.text(doc.splitTextToSize(legalNotice, pageWidth - 28), 14, currentY);
+  const noticeLines = doc.splitTextToSize(legalNotice, pageWidth - 28);
+  doc.text(noticeLines, 14, currentY);
 
-  const signY = currentY + 20;
+  // Line height in mm for 6.5pt Times italic at jsPDF's default 1.15 factor.
+  const noticeLineHeight = 6.5 * 0.3528 * 1.15;
+  const noticeBlockHeight = noticeLines.length * noticeLineHeight;
+  const signY = currentY + noticeBlockHeight + 10;
   doc.setFont("times", "normal");
   doc.setFontSize(7.5);
 
