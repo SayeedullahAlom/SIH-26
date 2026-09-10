@@ -282,7 +282,9 @@ Beyond automated tests, every AI-driven pipeline (extraction, retrieval, verdict
 
 ## 🤖 A Note on How This Was Built
 
-This project was built with heavy AI assistance for code generation, prompt drafting, and documentation — deliberately scoped by a strict rule the team held to throughout: **anything with a real-world or legal consequence, or that requires something only a human has (an account, a physical photo, a judgment call), stayed a team decision.** AI never sourced legal text from memory, never defined compliance criteria, and never signed off on go-live — it drafted first-pass code and prompts against specs the team wrote and validated.
+This project was developed primarily by the team, with AI used as a supporting tool for selected tasks such as code assistance, prompt drafting, debugging, and documentation. The core architecture, implementation decisions, legal requirements, compliance criteria, testing, and deployment decisions were made and validated by the team.
+
+As a strict project principle, anything involving real-world or legal consequences, human judgment, physical evidence, or external accounts remained a team responsibility. AI was used to assist development against specifications defined by the team; it did not independently define compliance criteria, source legal requirements from memory, or make the final go-live decision.
 
 ---
 
@@ -321,7 +323,8 @@ This project was built with heavy AI assistance for code generation, prompt draf
 ## 📜 License
 
 <!-- Confirm license before publishing — MIT assumed as a placeholder -->
-This project is licensed under the MIT License. See [`LICENSE`](LICENSE) for details.
+This project is open-sourced under the MIT License — use it, build on it, 
+just don't hold us liable if a package inspection goes sideways. See [`LICENSE`](LICENSE) for details.
 
 ---
 
