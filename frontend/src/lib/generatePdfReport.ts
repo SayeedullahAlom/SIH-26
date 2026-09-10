@@ -79,13 +79,11 @@ export async function generateComplianceReport({
 
   drawPageBorders(doc);
 
-  // 1. National Emblem
-
-  // 2. Government Letterhead
+  // Government Letterhead
   doc.setFont("times", "bold");
   doc.setFontSize(10.5);
   doc.setTextColor(15, 15, 15);
-  doc.text("GOVERNMENT OF INDIA", pageWidth / 2, 30.5, {
+  doc.text("GOVERNMENT OF INDIA", pageWidth / 2, 22, {
     align: "center",
   });
 
@@ -93,7 +91,7 @@ export async function generateComplianceReport({
   doc.text(
     "MINISTRY OF CONSUMER AFFAIRS, FOOD & PUBLIC DISTRIBUTION",
     pageWidth / 2,
-    35.5,
+    27,
     { align: "center" }
   );
 
@@ -101,7 +99,7 @@ export async function generateComplianceReport({
   doc.text(
     "DEPARTMENT OF CONSUMER AFFAIRS — LEGAL METROLOGY DIVISION",
     pageWidth / 2,
-    40,
+    31.5,
     { align: "center" }
   );
 
@@ -110,85 +108,72 @@ export async function generateComplianceReport({
   doc.text(
     "[Statutory Enforcement under The Legal Metrology Act, 2009 & Packaged Commodities Rules, 2011]",
     pageWidth / 2,
-    44,
+    35.5,
     { align: "center" }
   );
 
   // Double Ornamental Dividing Rules
   doc.setLineWidth(0.5);
-  doc.line(14, 46.5, pageWidth - 14, 46.5);
+  doc.line(14, 38, pageWidth - 14, 38);
   doc.setLineWidth(0.15);
-  doc.line(14, 47.5, pageWidth - 14, 47.5);
+  doc.line(14, 39, pageWidth - 14, 39);
 
   // Certificate Header
   doc.setFont("times", "bold");
-  doc.setFontSize(10.5);
+  doc.setFontSize(10);
   const certTitle = isPass
     ? "CERTIFICATE OF STATUTORY VERIFICATION & COMPLIANCE"
     : "MEMORANDUM OF STATUTORY NON-COMPLIANCE & INSPECTION NOTICE";
-  doc.text(certTitle, pageWidth / 2, 53, { align: "center" });
+  doc.text(certTitle, pageWidth / 2, 44.5, { align: "center" });
 
   // Metadata Panel Box
   doc.setLineWidth(0.25);
   doc.setDrawColor(120, 120, 120);
   doc.setFillColor(252, 252, 252);
-  doc.roundedRect(14, 56, pageWidth - 28, 20, 1, 1, "FD");
+  doc.roundedRect(14, 48, pageWidth - 28, 18, 1, 1, "FD");
 
-  doc.setFontSize(7.8);
+  doc.setFontSize(7.5);
   doc.setFont("times", "bold");
-  doc.text("DOSSIER REF ID:", 17, 61.5);
+  doc.text("DOSSIER REF ID:", 17, 53.5);
   doc.setFont("times", "normal");
-  doc.text(String(inspection?.id || "N/A"), 48, 61.5);
+  doc.text(String(inspection?.id || "N/A"), 48, 53.5);
 
   doc.setFont("times", "bold");
-  doc.text("COMMODITY / BRAND:", 17, 67);
+  doc.text("COMMODITY / BRAND:", 17, 59);
   doc.setFont("times", "normal");
   const prodName =
     extraction?.product_name?.value ||
     inspection?.product_name ||
     "Unnamed Commodity";
-  doc.text(String(prodName).slice(0, 42), 48, 67);
+  doc.text(String(prodName).slice(0, 42), 48, 59);
 
   doc.setFont("times", "bold");
-  doc.text("INSPECTING OFFICER ID:", 17, 72.5);
+  doc.text("INSPECTING OFFICER ID:", 118, 53.5);
   doc.setFont("times", "normal");
   doc.text(
     inspection?.officer_id
       ? `OFFICER-UNIT-${inspection.officer_id.slice(0, 8).toUpperCase()}`
       : "FIELD-ENF-UNIT-01",
-    48,
-    72.5
-  );
-
-  doc.setFont("times", "bold");
-  doc.text("INSPECTION DATE:", 118, 61.5);
-  doc.setFont("times", "normal");
-  doc.text(
-    inspection?.created_at
-      ? new Date(inspection.created_at).toLocaleString()
-      : new Date().toLocaleString(),
     148,
-    61.5
+    53.5
   );
 
   doc.setFont("times", "bold");
-  doc.text("STATUTORY STATUS:", 118, 67);
+  doc.text("STATUTORY STATUS:", 118, 59);
   doc.setFont("times", "bold");
   if (isPass) {
     doc.setTextColor(16, 120, 60);
-    doc.text("COMPLIANT (PASSED)", 148, 67);
+    doc.text("COMPLIANT (PASSED)", 148, 59);
   } else {
     doc.setTextColor(180, 20, 20);
-    doc.text("NON-COMPLIANT", 148, 67);
-    doc.setFontSize(6.8);
-    doc.text("[BREACH OF RULE 6 DETECTED]", 148, 71.5);
+    doc.text("NON-COMPLIANT", 148, 59);
   }
   doc.setTextColor(20, 20, 20);
 
   // Section I: Verification of Mandatory Declarations
-  let currentY = 82;
+  let currentY = 70;
   doc.setFont("times", "bold");
-  doc.setFontSize(8.8);
+  doc.setFontSize(8.5);
   doc.text(
     "I. VERIFICATION OF MANDATORY DECLARATIONS [RULE 6, PCR 2011]",
     14,
@@ -233,12 +218,11 @@ export async function generateComplianceReport({
             finalVal === "null" ||
             String(finalVal).toUpperCase() === "NOT DECLARED";
 
-          // Single Consolidated Value Cell: mentions officer corrections in brackets
           let valueText = isMissing ? "NOT DECLARED" : String(finalVal);
           if (isEdited && rawVal && String(rawVal) !== String(finalVal)) {
-            valueText = `${finalVal}  [Officer Verified; AI Detected: ${rawVal}]`;
+            valueText = `${finalVal} [Officer Verified; AI: ${rawVal}]`;
           } else if (isEdited) {
-            valueText = `${finalVal}  [Officer Verified]`;
+            valueText = `${finalVal} [Officer Verified]`;
           }
 
           let findingText = "Declared";
@@ -274,20 +258,21 @@ export async function generateComplianceReport({
       textColor: [10, 10, 10],
       font: "times",
       fontStyle: "bold",
-      fontSize: 7.6,
+      fontSize: 7.5,
       lineWidth: 0.2,
       lineColor: [90, 90, 90],
     },
     bodyStyles: {
       font: "times",
-      fontSize: 7.2,
+      fontSize: 7,
       textColor: [20, 20, 20],
       lineWidth: 0.1,
       lineColor: [180, 180, 180],
+      cellPadding: 1.5, // Reduced padding to prevent vertical overflow/overlapping
     },
     columnStyles: {
-      0: { cellWidth: 50, fontStyle: "bold" },
-      1: { cellWidth: 104 },
+      0: { cellWidth: 48, fontStyle: "bold" },
+      1: { cellWidth: 106 },
       2: { cellWidth: 28, halign: "center" },
     },
     didParseCell: (data) => {
@@ -303,6 +288,7 @@ export async function generateComplianceReport({
     },
     theme: "plain",
     margin: { left: 14, right: 14 },
+    tableWidth: 'auto',
   });
 
   // Section II: Statutory Compliance Determination & Overrides
@@ -315,7 +301,7 @@ export async function generateComplianceReport({
   }
 
   doc.setFont("times", "bold");
-  doc.setFontSize(8.8);
+  doc.setFontSize(8.5);
   doc.text(
     "II. STATUTORY COMPLIANCE DETERMINATION & RULE FINDINGS",
     14,
@@ -332,7 +318,6 @@ export async function generateComplianceReport({
     );
     const finalVerdictRaw = cat.officer_verdict || cat.verdict;
 
-    // Single Finding Cell: mentions officer override in brackets
     let findingText =
       finalVerdictRaw === "PASS"
         ? "COMPLIANT"
@@ -341,9 +326,7 @@ export async function generateComplianceReport({
         : "REVIEW REQ.";
 
     if (isOverridden) {
-      findingText += ` [Overridden; AI: ${
-        cat.verdict === "PASS" ? "COMPLIANT" : cat.verdict
-      }]`;
+      findingText += ` [Overridden]`;
     }
 
     const ref = cat.rule_reference
@@ -377,21 +360,22 @@ export async function generateComplianceReport({
       textColor: [10, 10, 10],
       font: "times",
       fontStyle: "bold",
-      fontSize: 7.6,
+      fontSize: 7.5,
       lineWidth: 0.2,
       lineColor: [90, 90, 90],
     },
     bodyStyles: {
       font: "times",
-      fontSize: 7.2,
+      fontSize: 7,
       textColor: [20, 20, 20],
       lineWidth: 0.1,
       lineColor: [180, 180, 180],
+      cellPadding: 1.8,
     },
     columnStyles: {
-      0: { cellWidth: 42, fontStyle: "bold" },
-      1: { cellWidth: 38, halign: "center" },
-      2: { cellWidth: 102 },
+      0: { cellWidth: 40, fontStyle: "bold" },
+      1: { cellWidth: 36, halign: "center" },
+      2: { cellWidth: 106 },
     },
     didParseCell: (data) => {
       if (data.section === "body" && data.column.index === 1) {
@@ -410,9 +394,10 @@ export async function generateComplianceReport({
     },
     theme: "plain",
     margin: { left: 14, right: 14 },
+    tableWidth: 'auto',
   });
 
-  // Section III: Inspected Commodity Packaging Specimens (Dedicated Page)
+  // Section III: Inspected Commodity Packaging Specimens
   const images = inspection?.images || [];
   if (images.length > 0) {
     doc.addPage();
@@ -420,7 +405,7 @@ export async function generateComplianceReport({
     currentY = 18;
 
     doc.setFont("times", "bold");
-    doc.setFontSize(9.5);
+    doc.setFontSize(9);
     doc.text(
       "III. INSPECTED COMMODITY PACKAGING SPECIMENS (PHOTOGRAPHIC EXHIBITS)",
       14,
@@ -428,8 +413,8 @@ export async function generateComplianceReport({
     );
     currentY += 8;
 
-    const imgWidth = 42;
-    const imgHeight = 42;
+    const imgWidth = 40;
+    const imgHeight = 40;
     const gap = 6;
     let startX = 14;
 
@@ -505,27 +490,27 @@ export async function generateComplianceReport({
   }
 
   doc.setFont("times", "italic");
-  doc.setFontSize(6.8);
+  doc.setFontSize(6.5);
   doc.setTextColor(40, 40, 40);
   const legalNotice =
     "NOTICE UNDER SECTION 36, LEGAL METROLOGY ACT, 2009: Whoever manufactures, packs, imports, sells, distributes, or exposes for sale any pre-packaged commodity which does not conform to the declarations on the package as stipulated by the Legal Metrology (Packaged Commodities) Rules, 2011 shall be punishable with fine which may extend to twenty-five thousand rupees, for the second offence to fifty thousand rupees, and for subsequent offence with fine up to one lakh rupees or imprisonment. This document constitutes an official statutory verification record.";
   doc.text(doc.splitTextToSize(legalNotice, pageWidth - 28), 14, currentY);
 
-  const signY = currentY + 22;
+  const signY = currentY + 20;
   doc.setFont("times", "normal");
-  doc.setFontSize(8);
+  doc.setFontSize(7.5);
 
   doc.setLineWidth(0.2);
   doc.line(16, signY, 70, signY);
   doc.text("Signature / Seal of Verifying Officer", 16, signY + 4);
   doc.setFont("times", "bold");
-  doc.text("Inspector of Legal Metrology", 16, signY + 8);
+  doc.text("Inspector of Legal Metrology", 16, signY + 7.5);
 
   doc.setFont("times", "normal");
   doc.line(pageWidth - 70, signY, pageWidth - 16, signY);
   doc.text("Authorized Departmental Endorsement", pageWidth - 70, signY + 4);
   doc.setFont("times", "bold");
-  doc.text("Controller of Legal Metrology", pageWidth - 70, signY + 8);
+  doc.text("Controller of Legal Metrology", pageWidth - 70, signY + 7.5);
 
   // Running Official Footers
   const totalPages = doc.getNumberOfPages();
@@ -538,7 +523,7 @@ export async function generateComplianceReport({
     doc.line(14, pageHeight - 12, pageWidth - 14, pageHeight - 12);
 
     doc.setFont("times", "normal");
-    doc.setFontSize(6.8);
+    doc.setFontSize(6.5);
     doc.setTextColor(90, 90, 90);
     doc.text(
       "Form IV-A / Statutory Audit Notice — The Legal Metrology (Packaged Commodities) Rules, 2011",

@@ -267,7 +267,6 @@ export default function InspectionDetail() {
         status: editStatus,
       });
 
-      // Update state directly from payload
       if (res.data?.extraction) {
         setExtraction({ ...res.data.extraction });
       }
@@ -295,7 +294,6 @@ export default function InspectionDetail() {
         officer_remarks: officerRemarks,
       });
 
-      // Update categories state directly
       setCategories((prev) =>
         prev.map((cat) =>
           cat.category === overrideCategory
@@ -376,7 +374,7 @@ export default function InspectionDetail() {
         initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: "easeOut" }}
-        className="flex flex-col gap-8 max-w-6xl mx-auto w-full"
+        className="flex flex-col gap-8 max-w-6xl mx-auto w-full p-4"
       >
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -430,7 +428,6 @@ export default function InspectionDetail() {
               <Card key={img.id || img.s3_url || idx} className="overflow-hidden p-0 bg-white">
                 <img
                   id={`inspection-img-${idx}`}
-                  crossOrigin="anonymous"
                   src={img.download_url || img.url}
                   alt={img.side}
                   className="w-full aspect-square object-cover"
@@ -487,7 +484,6 @@ export default function InspectionDetail() {
                           )}
                         </div>
 
-                        {/* Always display original Vision AI data if edited */}
                         {isEdited && (
                           <span className="text-xs text-zinc-400 font-mono mt-0.5">
                             Vision AI Original: <span className="text-zinc-600">{rawVal || "not detected"}</span>
