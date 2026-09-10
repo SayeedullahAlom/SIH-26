@@ -58,35 +58,35 @@ It is a full-stack system: a FastAPI backend with a Postgres + pgvector data lay
 
 ```
                      ┌─────────────────────┐
-                     │      Frontend        │
-                     │  (field inspection    │
-                     │   capture UI)         │
-                     └──────────┬───────────┘
+                     │      Frontend       │
+                     │  (field inspection  │
+                     │   capture UI)       │
+                     └──────────┬──────────┘
                                 │ HTTPS / JWT
                                 ▼
                      ┌─────────────────────┐
-                     │       FastAPI         │
-                     │  ─────────────────    │
-                     │  Auth · Inspections    │
-                     │  RAG · Extraction      │
-                     │  Verdicts · Reports    │
-                     └───┬───────────┬───────┘
+                     │       FastAPI       │
+                     │  ─────────────────  │
+                     │  Auth · Inspections │
+                     │  RAG · Extraction   │
+                     │  Verdicts · Reports │
+                     └───┬───────────┬─────┘
                          │           │
              ┌───────────┘           └───────────┐
              ▼                                    ▼
-   ┌───────────────────┐               ┌────────────────────┐
-   │   PostgreSQL 13     │               │  Cloudflare R2       │
-   │   + pgvector         │◄─────────────┤  (inspection images) │
-   │  users · inspections │  embeddings  └────────────────────┘
-   │  extractions          │
-   │  rules_chunks (RAG)   │
-   │  verdicts             │
-   └──────────┬────────────┘
+   ┌─────────────────────┐                 ┌─────────────────────┐
+   │   PostgreSQL 13     │                 │  Cloudflare R2      │
+   │   + pgvector        │◄─────────────── ┤  (inspection images)│
+   │  users · inspections│  embeddings     └─────────────────────┘
+   │  extractions        │
+   │  rules_chunks (RAG) │
+   │  verdicts           │
+   └──────────┬──────────┘
               │
               ▼
    ┌─────────────────────────────────────────────┐
-   │  Legal Metrology Rules, 2011 (sourced text)   │
-   │  → chunked → embedded → retrieved by query     │
+   │  Legal Metrology Rules, 2011 (sourced text) │
+   │  → chunked → embedded → retrieved by query  │
    └─────────────────────────────────────────────┘
 ```
 
